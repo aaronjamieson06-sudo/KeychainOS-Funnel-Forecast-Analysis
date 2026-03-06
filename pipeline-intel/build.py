@@ -295,7 +295,7 @@ tr:last-child td{{border-bottom:none;}} tr:hover td{{background:var(--bg);}}
 <div class="cbar">
   <div class="cg">
     <span class="cl">Close Rate</span>
-    <input type="range" id="sl-cr" min="8" max="12" step="0.5" value="{DEFAULT_CR}" oninput="update()">
+    <input type="range" id="sl-cr" min="8" max="15" step="0.5" value="{DEFAULT_CR}" oninput="update()">
     <span class="cv" id="v-cr">{DEFAULT_CR}%</span>
   </div>
   <div class="csep"></div>
