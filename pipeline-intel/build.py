@@ -307,7 +307,7 @@ tr:last-child td{{border-bottom:none;}} tr:hover td{{background:var(--bg);}}
   <div class="csep"></div>
   <div class="cg">
     <span class="cl">Leads / Mo</span>
-    <input type="range" id="sl-leads" min="200" max="300" step="5" value="{DEFAULT_LEADS}" oninput="update()">
+    <input type="range" id="sl-leads" min="40" max="300" step="5" value="{DEFAULT_LEADS}" oninput="update()">
     <span class="cv" id="v-leads">{DEFAULT_LEADS}</span>
   </div>
   <div class="csep"></div>
