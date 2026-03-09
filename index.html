@@ -88,7 +88,7 @@ h2{font-size:26px;font-weight:800;letter-spacing:-0.6px;color:var(--text);line-h
 .atext strong{color:white;font-weight:600;}
 
 /* BADGE */
-.by{background:var(--text);color:var(--accent);padding:2px 10px;border-radius:5px;font-weight:800;letter-spacing:-0.4px;display:inline-block;}
+.by{background:var(--text) !important;color:var(--accent) !important;padding:2px 10px;border-radius:5px;font-weight:800;letter-spacing:-0.4px;display:inline-block;}
 
 /* TAGS */
 .tag{display:inline-block;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;padding:3px 8px;border-radius:4px;margin-top:8px;}
@@ -120,10 +120,10 @@ tr:last-child td{border-bottom:none;} tr:hover td{background:var(--bg);}
 /* FUNNEL */
 .frow{margin-bottom:3px;}
 .ftrack{position:relative;height:46px;background:var(--white);border:1px solid var(--border);border-radius:6px;overflow:hidden;display:flex;align-items:center;padding:0 16px;}
-.ffill{position:absolute;left:0;top:0;bottom:0;background:var(--accent);opacity:0.18;border-radius:6px 0 0 6px;}
+.ffill{position:absolute;left:0;top:0;bottom:0;max-width:98%;background:var(--accent);opacity:0.18;border-radius:6px 0 0 6px;}
 .ffill.fg{background:var(--green);opacity:0.14;}
 .fbl{font-size:12px;font-weight:500;color:var(--secondary);z-index:1;position:relative;}
-.fbv{font-size:20px;font-weight:800;letter-spacing:-0.4px;color:var(--text);margin-left:auto;z-index:1;position:relative;}
+.fbv{font-size:20px;font-weight:800;letter-spacing:-0.4px;color:var(--text);margin-left:auto;z-index:10;position:relative;}
 .fbv.fg{color:var(--green);}
 .fdrop{font-size:11px;color:var(--secondary);padding:3px 16px 7px;display:flex;align-items:center;gap:5px;}
 .fdrop::before{content:'↓';color:var(--red);font-size:10px;}
@@ -237,7 +237,7 @@ tr:last-child td{border-bottom:none;} tr:hover td{background:var(--bg);}
 <div class="cbar">
   <div class="cg">
     <span class="cl">Close Rate</span>
-    <input type="range" id="sl-cr" min="8" max="12" step="0.5" value="9.5" oninput="update()">
+    <input type="range" id="sl-cr" min="8" max="15" step="0.5" value="9.5" oninput="update()">
     <span class="cv" id="v-cr">9.5%</span>
   </div>
   <div class="csep"></div>
@@ -249,7 +249,7 @@ tr:last-child td{border-bottom:none;} tr:hover td{background:var(--bg);}
   <div class="csep"></div>
   <div class="cg">
     <span class="cl">Leads / Mo</span>
-    <input type="range" id="sl-leads" min="200" max="300" step="5" value="265" oninput="update()">
+    <input type="range" id="sl-leads" min="40" max="300" step="5" value="265" oninput="update()">
     <span class="cv" id="v-leads">265</span>
   </div>
   <div class="csep"></div>
@@ -309,7 +309,7 @@ tr:last-child td{border-bottom:none;} tr:hover td{background:var(--bg);}
     <div class="stat"><div class="slabel">Close Rate</div><div class="sval" id="s1-cr">9.5%</div><div class="snote">MQL → Closed Won</div></div>
   </div>
 
-  <footer><span class="fmeta">Pipeline Intelligence · KeychainOS · Mar 06, 2026</span><span class="fconf">Confidential</span></footer>
+  <footer><span class="fmeta">Pipeline Intelligence · KeychainOS · Mar 09, 2026</span><span class="fconf">Confidential</span></footer>
 </div>
 
 
@@ -344,7 +344,7 @@ tr:last-child td{border-bottom:none;} tr:hover td{background:var(--bg);}
     </div>
     <div class="card">
       <div class="plabel" style="margin-bottom:10px;">Monthly Targets</div>
-      <div class="mrow"><span class="mrl">Projected Closes / Month</span><span class="mrv by" id="s2-proj">25</span></div>
+      <div class="mrow"><span class="mrl">Projected Closes / Month</span><span class="mrv" id="s2-proj" style="font-weight:800;">25</span></div>
       <div class="mrow"><span class="mrl">Closed Won / Month</span><span class="mrv" id="s2-cw">20</span></div>
       <div class="mrow"><span class="mrl">ARR / Month</span><span class="mrv" id="s2-arr-mo">$1.02M</span></div>
       <div class="mrow"><span class="mrl">ARR / Quarter (baseline)</span><span class="mrv" id="s2-arr-q">$3.52M</span></div>
@@ -361,7 +361,7 @@ tr:last-child td{border-bottom:none;} tr:hover td{background:var(--bg);}
   </div>
   <div class="ablock"><div class="aicon">→</div><div class="atext"><strong>Diagnosis:</strong> Past 8 reps, per-rep output degrades without additional lead volume. Pipeline capacity is the constraint, not headcount. Efficiency drops 47% from 6→11 reps while total closes remain flat.</div></div>
 
-  <footer><span class="fmeta">Pipeline Intelligence · KeychainOS · Mar 06, 2026</span><span class="fconf">Confidential</span></footer>
+  <footer><span class="fmeta">Pipeline Intelligence · KeychainOS · Mar 09, 2026</span><span class="fconf">Confidential</span></footer>
 </div>
 
 
@@ -384,7 +384,7 @@ tr:last-child td{border-bottom:none;} tr:hover td{background:var(--bg);}
       <div class="fdrop" id="f-d3">~29 lost in discovery / no product fit</div>
       <div class="frow"><div class="ftrack"><div class="ffill" id="f-f4" style="width:20%;"></div><span class="fbl">SQL · Sales Engaged</span><span class="fbv" id="f-sql">52</span></div></div>
       <div class="fdrop" id="f-d4">~27 lost during proposal / evaluation</div>
-      <div class="frow"><div class="ftrack" style="border-color:rgba(245,208,0,0.5);background:rgba(245,208,0,0.04);"><div class="ffill" id="f-f5" style="width:9.5%;opacity:0.35;"></div><span class="fbl" style="font-weight:600;color:var(--text);">Projected Close Quota</span><span class="fbv by" id="f-proj">25</span></div></div>
+      <div class="frow"><div class="ftrack" style="border-color:rgba(245,208,0,0.5);background:rgba(245,208,0,0.04);"><div class="ffill" id="f-f5" style="width:9.5%;opacity:0.35;"></div><span class="fbl" style="font-weight:600;color:var(--text);">Projected Close Quota</span><span class="fbv" id="f-proj" style="font-weight:800;">25</span></div></div>
       <div class="fdrop fc" style="color:var(--green);" id="f-cn">5 of 25 carry to Month 2 — designed into model</div>
       <div class="frow"><div class="ftrack" style="border-color:rgba(26,158,95,0.3);"><div class="ffill fg" id="f-f6" style="width:7.5%;"></div><span class="fbl" style="color:var(--green);font-weight:600;">Closed Won · M1</span><span class="fbv fg" id="f-cw">20</span></div></div>
     </div>
@@ -409,7 +409,7 @@ tr:last-child td{border-bottom:none;} tr:hover td{background:var(--bg);}
     </div>
   </div>
 
-  <footer><span class="fmeta">Pipeline Intelligence · KeychainOS · Mar 06, 2026</span><span class="fconf">Confidential</span></footer>
+  <footer><span class="fmeta">Pipeline Intelligence · KeychainOS · Mar 09, 2026</span><span class="fconf">Confidential</span></footer>
 </div>
 
 
@@ -424,7 +424,7 @@ tr:last-child td{border-bottom:none;} tr:hover td{background:var(--bg);}
   <div class="sgrid">
     <div class="sc">
       <div class="smo">Month 1 · Close Window</div>
-      <div class="srow"><span class="srl">Projected close quota</span><span class="srv by" id="s4-p1">25</span></div>
+      <div class="srow"><span class="srl">Projected close quota</span><span class="srv" id="s4-p1" style="font-weight:800;">25</span></div>
       <div class="srow"><span class="srl">Closed Won M1</span><span class="srv green" id="s4-cw1">20</span></div>
       <div class="srow"><span class="srl">Planned carry (built-in)</span><span class="srv" id="s4-c1">5</span></div>
       <div class="srow"><span class="srl">Leads required</span><span class="srv" id="s4-l1">265</span></div>
@@ -434,7 +434,7 @@ tr:last-child td{border-bottom:none;} tr:hover td{background:var(--bg);}
     </div>
     <div class="sc">
       <div class="smo">Month 2 · Carryover + Base</div>
-      <div class="srow"><span class="srl">New projected closes</span><span class="srv by" id="s4-p2">25</span></div>
+      <div class="srow"><span class="srl">New projected closes</span><span class="srv" id="s4-p2" style="font-weight:800;">25</span></div>
       <div class="srow"><span class="srl">M1 carryover closes</span><span class="srv green" id="s4-cr2">+4</span></div>
       <div class="srow"><span class="srl">Lost from M1 carry (20%)</span><span class="srv red">−1</span></div>
       <div class="srow"><span class="srl">Total closes M2</span><span class="srv green" id="s4-cw2">24</span></div>
@@ -449,7 +449,7 @@ tr:last-child td{border-bottom:none;} tr:hover td{background:var(--bg);}
     </div>
     <div class="sc">
       <div class="smo">Month 3 · Normalized</div>
-      <div class="srow"><span class="srl">New projected closes</span><span class="srv by" id="s4-p3">25</span></div>
+      <div class="srow"><span class="srl">New projected closes</span><span class="srv" id="s4-p3" style="font-weight:800;">25</span></div>
       <div class="srow"><span class="srl">M2 carryover closes</span><span class="srv green">+4</span></div>
       <div class="srow"><span class="srl">M1 residual to M3</span><span class="srv green">+1</span></div>
       <div class="srow"><span class="srl">Total closes M3</span><span class="srv green" id="s4-cw3">~25</span></div>
@@ -468,7 +468,7 @@ tr:last-child td{border-bottom:none;} tr:hover td{background:var(--bg);}
     <div class="stat"><div class="slabel">Monthly Proj. Quota</div><div class="sval by" id="s4-q" style="font-size:28px;">25</div><div class="snote">Steady-state · <span id="s4-ln">265</span> leads/mo</div></div>
   </div>
 
-  <footer><span class="fmeta">Pipeline Intelligence · KeychainOS · Mar 06, 2026</span><span class="fconf">Confidential</span></footer>
+  <footer><span class="fmeta">Pipeline Intelligence · KeychainOS · Mar 09, 2026</span><span class="fconf">Confidential</span></footer>
 </div>
 
 
@@ -538,7 +538,7 @@ tr:last-child td{border-bottom:none;} tr:hover td{background:var(--bg);}
     </div>
   </div>
 
-  <footer><span class="fmeta">Pipeline Intelligence · KeychainOS · Mar 06, 2026</span><span class="fconf">Confidential</span></footer>
+  <footer><span class="fmeta">Pipeline Intelligence · KeychainOS · Mar 09, 2026</span><span class="fconf">Confidential</span></footer>
 </div>
 
 
@@ -577,11 +577,12 @@ function model(cr, acv, leads) {
   const m2cw = cw + m1Resolved;                 // 20 + 4 = 24
   const arrM2 = m2cw * acv;
 
-  // M3: cw from fresh pipeline + resolved M2 carries + M1 residual
-  const m2Carry = proj - cw;                    // same carry rate as M1 = 5
-  const m2Resolved = Math.round(m2Carry * 0.8); // 4
-  const m1Residual = Math.max(1, Math.round(carry * 0.1)); // 1
-  const m3cw = cw + m2Resolved + m1Residual;    // 20 + 4 + 1 = 25
+  // M3: fresh pipeline closes + M2 carries resolving + M1 deal that slipped past M2
+  // M2 carry = same 20% rate applied to M2's new projected closes
+  const m2Carry = carry;                         // M2 generates same carry count as M1
+  const m2Resolved = Math.round(m2Carry * 0.8); // 80% of M2 carries close in M3
+  const m1SlippedToM3 = carry - m1Resolved;      // M1 deals that didn't close in M2 (1)
+  const m3cw = cw + m2Resolved + m1SlippedToM3; // 20 + 4 + 1 = 25
   const arrM3 = m3cw * acv;
 
   const arrM1 = cw * acv;
@@ -601,10 +602,10 @@ function model(cr, acv, leads) {
     const sCarry = sProj - sCw;
     const sM1r = Math.round(sCarry * 0.8);
     const sM2cw = sCw + sM1r;
-    const sM2carry = sProj - sCw;
-    const sM2r = Math.round(sM2carry * 0.8);
-    const sM1res = Math.max(1, Math.round(sCarry * 0.1));
-    const sM3cw = sCw + sM2r + sM1res;
+    const sM2carry = sCarry;                        // M2 carry rate same as M1
+    const sM2r = Math.round(sM2carry * 0.8);        // 80% of M2 carries close in M3
+    const sM1slipped = sCarry - sM1r;               // M1 deals that slipped past M2
+    const sM3cw = sCw + sM2r + sM1slipped;
     return {
       cr: (sCr*100).toFixed(1),
       cw: sCw,
@@ -624,7 +625,7 @@ function model(cr, acv, leads) {
 
   return {
     cr,acv,leads,proj,cw,carry,
-    m1Resolved,m2cw,m3cw,
+    m1Resolved,m1SlippedToM3,m2cw,m3cw,
     arrM1,arrM2,arrM3,arrQ,totalQ,
     response,mql,sql,
     under,over,wk,swAmt,implAmt
@@ -632,28 +633,30 @@ function model(cr, acv, leads) {
 }
 
 // ── BUILD REP TABLE ───────────────────────────────────────
+function statusBadge(val) {
+  const v = parseFloat(val);
+  if (v >= 3.5) return `<span style="background:#F0FBF6;color:#1A9E5F;font-size:10px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;padding:3px 8px;border-radius:4px;">Efficient</span>`;
+  if (v >= 2.5) return `<span style="background:#0A0A0A;color:#F5D000;font-size:10px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;padding:3px 8px;border-radius:4px;">Optimal</span>`;
+  if (v >= 2.0) return `<span style="background:#FFF4E8;color:#B05010;font-size:10px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;padding:3px 8px;border-radius:4px;">Diminishing</span>`;
+  return `<span style="background:#FFF0F0;color:#E03030;font-size:10px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;padding:3px 8px;border-radius:4px;">Lead-constrained</span>`;
+}
+
 function buildRepTable(d) {
   const rows=[
-    {r:6, t:4, a:(d.cw/6).toFixed(1), s:'efficient'},
-    {r:8, t:3, a:(d.cw/8).toFixed(1), s:'optimal'},
-    {r:10,t:2, a:(d.cw/10).toFixed(1),s:'diminishing'},
-    {r:11,t:2, a:(d.cw/11).toFixed(1),s:'constrained'},
+    {r:6,  t:4, a:(d.cw/6).toFixed(1)},
+    {r:8,  t:3, a:(d.cw/8).toFixed(1)},
+    {r:10, t:2, a:(d.cw/10).toFixed(1)},
+    {r:11, t:2, a:(d.cw/11).toFixed(1)},
   ];
-  const badges={
-    efficient:`<span style="background:#F0FBF6;color:#1A9E5F;font-size:10px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;padding:3px 8px;border-radius:4px;">Efficient</span>`,
-    optimal:`<span style="background:#0A0A0A;color:#F5D000;font-size:10px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;padding:3px 8px;border-radius:4px;">Optimal</span>`,
-    diminishing:`<span style="background:#FFF4E8;color:#B05010;font-size:10px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;padding:3px 8px;border-radius:4px;">Diminishing</span>`,
-    constrained:`<span style="background:#FFF0F0;color:#E03030;font-size:10px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;padding:3px 8px;border-radius:4px;">Lead-constrained</span>`,
-  };
   const tb=document.getElementById('rep-tbody');
   tb.innerHTML=rows.map(r=>`
     <tr>
       <td>${r.r} Reps</td>
       <td>${r.t} / mo</td>
-      <td style="font-size:18px;font-weight:800;letter-spacing:-0.3px;color:${parseFloat(r.a)<2?'#E03030':parseFloat(r.a)<2.5?'#B05010':'inherit'}">${r.a}</td>
+      <td style="font-size:18px;font-weight:800;letter-spacing:-0.3px;color:${parseFloat(r.a)<2?'#E03030':parseFloat(r.a)<2.5?'#B05010':parseFloat(r.a)<3.5?'inherit':'#1A9E5F'}">${r.a}</td>
       <td>~${d.cw}</td>
       <td>${fmtM(d.arrM1)}</td>
-      <td>${badges[r.s]}</td>
+      <td>${statusBadge(r.a)}</td>
     </tr>
   `).join('');
 }
@@ -699,19 +702,19 @@ function update() {
   set('f-leads', d.leads);
   set('f-d1', '~'+Math.round(d.leads*0.50)+' lost at initial outreach / unresponsive');
   set('f-res', d.response);
-  document.getElementById('f-f2').style.width=(d.response/d.leads*100)+'%';
+  document.getElementById('f-f2').style.width=Math.min(d.response/d.leads*100,98)+'%';
   set('f-d2', '~'+(d.response-d.mql)+' disqualified at CS/AM qualification');
   set('f-mql', d.mql);
-  document.getElementById('f-f3').style.width=(d.mql/d.leads*100)+'%';
+  document.getElementById('f-f3').style.width=Math.min(d.mql/d.leads*100,98)+'%';
   set('f-d3', '~'+(d.mql-d.sql)+' lost in discovery / no product fit');
   set('f-sql', d.sql);
-  document.getElementById('f-f4').style.width=(d.sql/d.leads*100)+'%';
+  document.getElementById('f-f4').style.width=Math.min(d.sql/d.leads*100,98)+'%';
   set('f-d4', '~'+(d.sql-d.proj)+' lost during proposal / evaluation');
   set('f-proj', d.proj);
-  document.getElementById('f-f5').style.width=(d.proj/d.leads*100)+'%';
+  document.getElementById('f-f5').style.width=Math.min(d.proj/d.leads*100,98)+'%';
   set('f-cn', d.carry+' of '+d.proj+' carry to Month 2 — designed into model');
   set('f-cw', d.cw);
-  document.getElementById('f-f6').style.width=(d.cw/d.leads*100)+'%';
+  document.getElementById('f-f6').style.width=Math.min(d.cw/d.leads*100,98)+'%';
   set('f-ratio', (d.leads/d.proj).toFixed(1));
   set('f-rn', d.leads+' ÷ '+d.proj+' projected = '+(d.leads/d.proj).toFixed(1)+':1');
   set('f-acv', fmtK(acv));
