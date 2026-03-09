@@ -1,62 +1,4 @@
-"""
-build.py — KeychainOS Pipeline Intelligence Dashboard
-Generates index.html as a static site deployed via GitHub Pages.
-
-CONFIGURATION
-─────────────
-All tunable parameters are in the CONFIG block below.
-The generated index.html is the site — do not edit it manually.
-
-ACCESS CODE
-───────────
-To change the access code:
-  1. Pick a new code (any length matching CODE_LENGTH)
-  2. Run: python3 -c "import hashlib; print(hashlib.sha256('YOURCODE'.encode()).hexdigest())"
-  3. Paste the result into CODE_HASH below
-  Current code: Pipeline2026
-"""
-
-import hashlib
-from datetime import datetime
-
-# ── CONFIG ────────────────────────────────────────────────────────────────────
-OUTPUT_FILE   = "index.html"
-
-# Access gate
-# Current code: Pipeline2026
-CODE_HASH     = hashlib.sha256("Pipeline2026".encode()).hexdigest()
-CODE_LENGTH   = 12
-
-# Model defaults (these become the slider start positions)
-DEFAULT_CR    = 9.5    # Close rate % (slider: 8–12)
-DEFAULT_ACV   = 51     # ACV in $K    (slider: 40–75)
-DEFAULT_LEADS = 265    # Leads/month  (slider: 200–300)
-
-# Scenario multipliers (applied to close rate only; lead volume stays constant)
-UNDER_CR_MULT = 0.68   # e.g. 9.5% → 6.5%
-OVER_CR_MULT  = 1.32   # e.g. 9.5% → 12.5%
-
-# Deal structure (proportion of ACV)
-SW_RATIO      = 36/51  # Software portion
-IMPL_RATIO    = 15/51  # Implementation portion
-
-# Carry model
-CARRY_RATE    = 0.20   # % of projected closes that push to next month
-CARRY_RESOLVE = 0.80   # % of carried deals that eventually close
-M1_RESIDUAL   = True   # Whether ~1 M1 deal trickles to M3
-
-# Funnel drop-off rates (approximate)
-RESPONSE_RATE = 0.50   # % of raw leads that respond
-MQL_RATE      = 0.305  # % of raw leads that reach MQL
-SQL_RATE      = 0.196  # % of raw leads that reach SQL
-
-# Generated timestamp
-GENERATED_AT  = datetime.utcnow().strftime("%b %d, %Y")
-# ──────────────────────────────────────────────────────────────────────────────
-
-
-def build_html():
-    return f"""<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -64,159 +6,159 @@ def build_html():
 <title>KeychainOS · Pipeline Intelligence</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
-*{{margin:0;padding:0;box-sizing:border-box;}}
-:root{{
+*{margin:0;padding:0;box-sizing:border-box;}
+:root{
   --bg:#F7F7F5;--white:#FFFFFF;--border:#E8E8E4;
   --accent:#F5D000;--text:#0A0A0A;--secondary:#6B6B6B;
   --red:#E03030;--green:#1A9E5F;--radius:10px;
-}}
-body{{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-height:100vh;-webkit-font-smoothing:antialiased;}}
+}
+body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-height:100vh;-webkit-font-smoothing:antialiased;}
 
 /* GATE */
-#gate{{position:fixed;inset:0;background:var(--bg);z-index:9999;display:flex;align-items:center;justify-content:center;}}
-.gate-inner{{text-align:center;max-width:380px;width:100%;padding:2rem;}}
-.gate-brand{{font-size:22px;font-weight:800;letter-spacing:-0.5px;color:var(--text);margin-bottom:4px;}}
-.gate-brand span{{color:var(--accent);background:var(--text);padding:0 6px;border-radius:4px;}}
-.gate-sub{{font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:var(--secondary);margin-bottom:28px;}}
-.gate-prompt{{font-size:12px;color:var(--secondary);margin-bottom:16px;}}
-.gate-boxes{{display:flex;gap:6px;justify-content:center;margin-bottom:12px;flex-wrap:wrap;}}
-.dbox{{width:34px;height:42px;border:1px solid var(--border);border-radius:6px;text-align:center;font-size:16px;font-family:'Inter',sans-serif;font-weight:700;color:var(--text);background:var(--white);outline:none;transition:border-color 0.15s;}}
-.dbox:focus{{border-color:var(--accent);box-shadow:0 0 0 3px rgba(245,208,0,0.2);}}
-.dbox.err{{border-color:var(--red);animation:shake 0.3s ease;}}
-@keyframes shake{{0%,100%{{transform:translateX(0);}}25%{{transform:translateX(-4px);}}75%{{transform:translateX(4px);}}}}
-#gate-error{{font-size:11px;color:var(--red);height:16px;}}
+#gate{position:fixed;inset:0;background:var(--bg);z-index:9999;display:flex;align-items:center;justify-content:center;}
+.gate-inner{text-align:center;max-width:380px;width:100%;padding:2rem;}
+.gate-brand{font-size:22px;font-weight:800;letter-spacing:-0.5px;color:var(--text);margin-bottom:4px;}
+.gate-brand span{color:var(--accent);background:var(--text);padding:0 6px;border-radius:4px;}
+.gate-sub{font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:var(--secondary);margin-bottom:28px;}
+.gate-prompt{font-size:12px;color:var(--secondary);margin-bottom:16px;}
+.gate-boxes{display:flex;gap:6px;justify-content:center;margin-bottom:12px;flex-wrap:wrap;}
+.dbox{width:34px;height:42px;border:1px solid var(--border);border-radius:6px;text-align:center;font-size:16px;font-family:'Inter',sans-serif;font-weight:700;color:var(--text);background:var(--white);outline:none;transition:border-color 0.15s;}
+.dbox:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(245,208,0,0.2);}
+.dbox.err{border-color:var(--red);animation:shake 0.3s ease;}
+@keyframes shake{0%,100%{transform:translateX(0);}25%{transform:translateX(-4px);}75%{transform:translateX(4px);}}
+#gate-error{font-size:11px;color:var(--red);height:16px;}
 
 /* NAV */
-nav{{position:fixed;top:0;left:0;right:0;z-index:100;background:var(--white);border-bottom:1px solid var(--border);padding:0 40px;height:52px;display:flex;align-items:center;gap:2px;}}
-.nav-brand{{font-size:11px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;color:var(--text);margin-right:20px;}}
-.nav-btn{{background:none;border:none;font-family:'Inter',sans-serif;font-size:11px;font-weight:500;letter-spacing:0.8px;text-transform:uppercase;color:var(--secondary);padding:6px 12px;border-radius:6px;cursor:pointer;transition:all 0.15s;}}
-.nav-btn:hover{{background:var(--bg);color:var(--text);}}
-.nav-btn.active{{background:var(--accent);color:var(--text);font-weight:700;}}
+nav{position:fixed;top:0;left:0;right:0;z-index:100;background:var(--white);border-bottom:1px solid var(--border);padding:0 40px;height:52px;display:flex;align-items:center;gap:2px;}
+.nav-brand{font-size:11px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;color:var(--text);margin-right:20px;}
+.nav-btn{background:none;border:none;font-family:'Inter',sans-serif;font-size:11px;font-weight:500;letter-spacing:0.8px;text-transform:uppercase;color:var(--secondary);padding:6px 12px;border-radius:6px;cursor:pointer;transition:all 0.15s;}
+.nav-btn:hover{background:var(--bg);color:var(--text);}
+.nav-btn.active{background:var(--accent);color:var(--text);font-weight:700;}
 
 /* CONTROLS BAR */
-.cbar{{position:fixed;top:52px;left:0;right:0;z-index:99;background:var(--text);border-bottom:1px solid #222;padding:0 40px;height:60px;display:flex;align-items:center;gap:28px;}}
-.cg{{display:flex;align-items:center;gap:10px;}}
-.cl{{font-size:10px;font-weight:700;letter-spacing:0.9px;text-transform:uppercase;color:rgba(255,255,255,0.4);white-space:nowrap;}}
-.cv{{font-size:14px;font-weight:800;letter-spacing:-0.3px;color:var(--accent);min-width:52px;text-align:right;}}
-.csep{{width:1px;height:28px;background:#333;}}
-.cbadge{{font-size:10px;font-weight:600;letter-spacing:0.7px;text-transform:uppercase;color:rgba(255,255,255,0.25);}}
-input[type=range]{{-webkit-appearance:none;appearance:none;width:120px;height:3px;background:#333;border-radius:2px;outline:none;cursor:pointer;}}
-input[type=range]::-webkit-slider-thumb{{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--accent);cursor:pointer;border:2px solid var(--text);box-shadow:0 0 0 2px var(--accent);}}
-input[type=range]::-moz-range-thumb{{width:14px;height:14px;border-radius:50%;background:var(--accent);cursor:pointer;border:2px solid var(--text);}}
+.cbar{position:fixed;top:52px;left:0;right:0;z-index:99;background:var(--text);border-bottom:1px solid #222;padding:0 40px;height:60px;display:flex;align-items:center;gap:28px;}
+.cg{display:flex;align-items:center;gap:10px;}
+.cl{font-size:10px;font-weight:700;letter-spacing:0.9px;text-transform:uppercase;color:rgba(255,255,255,0.4);white-space:nowrap;}
+.cv{font-size:14px;font-weight:800;letter-spacing:-0.3px;color:var(--accent);min-width:52px;text-align:right;}
+.csep{width:1px;height:28px;background:#333;}
+.cbadge{font-size:10px;font-weight:600;letter-spacing:0.7px;text-transform:uppercase;color:rgba(255,255,255,0.25);}
+input[type=range]{-webkit-appearance:none;appearance:none;width:120px;height:3px;background:#333;border-radius:2px;outline:none;cursor:pointer;}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--accent);cursor:pointer;border:2px solid var(--text);box-shadow:0 0 0 2px var(--accent);}
+input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:var(--accent);cursor:pointer;border:2px solid var(--text);}
 
 /* PAGES */
-.page{{display:none;padding:132px 40px 60px;animation:fadeIn 0.2s ease;}}
-.page.active{{display:block;}}
-@keyframes fadeIn{{from{{opacity:0;transform:translateY(4px);}}to{{opacity:1;transform:translateY(0);}}}}
+.page{display:none;padding:132px 40px 60px;animation:fadeIn 0.2s ease;}
+.page.active{display:block;}
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:translateY(0);}}
 
 /* TYPE */
-.plabel{{font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:var(--secondary);margin-bottom:6px;}}
-h2{{font-size:26px;font-weight:800;letter-spacing:-0.6px;color:var(--text);line-height:1.1;}}
-.sub{{font-size:12px;color:var(--secondary);margin-top:5px;}}
+.plabel{font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:var(--secondary);margin-bottom:6px;}
+h2{font-size:26px;font-weight:800;letter-spacing:-0.6px;color:var(--text);line-height:1.1;}
+.sub{font-size:12px;color:var(--secondary);margin-top:5px;}
 
 /* CARDS & GRIDS */
-.card{{background:var(--white);border:1px solid var(--border);border-radius:var(--radius);padding:24px;}}
-.g2{{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;}}
-.g3{{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;}}
-.g4{{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;}}
-.divider{{height:1px;background:var(--border);margin:24px 0;}}
+.card{background:var(--white);border:1px solid var(--border);border-radius:var(--radius);padding:24px;}
+.g2{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;}
+.g3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;}
+.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;}
+.divider{height:1px;background:var(--border);margin:24px 0;}
 
 /* METRIC ROWS */
-.mrow{{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--border);}}
-.mrow:last-child{{border-bottom:none;}}
-.mrl{{font-size:12px;color:var(--secondary);}}
-.mrv{{font-size:20px;font-weight:800;letter-spacing:-0.4px;}}
+.mrow{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--border);}
+.mrow:last-child{border-bottom:none;}
+.mrl{font-size:12px;color:var(--secondary);}
+.mrv{font-size:20px;font-weight:800;letter-spacing:-0.4px;}
 
 /* STAT TILES */
-.stat{{background:var(--white);border:1px solid var(--border);border-radius:var(--radius);padding:20px 22px;}}
-.slabel{{font-size:11px;font-weight:600;letter-spacing:0.9px;text-transform:uppercase;color:var(--secondary);margin-bottom:6px;}}
-.sval{{font-size:28px;font-weight:800;letter-spacing:-0.6px;color:var(--text);line-height:1;}}
-.sval.green{{color:var(--green);}} .sval.red{{color:var(--red);}}
-.snote{{font-size:11px;color:var(--secondary);margin-top:4px;}}
+.stat{background:var(--white);border:1px solid var(--border);border-radius:var(--radius);padding:20px 22px;}
+.slabel{font-size:11px;font-weight:600;letter-spacing:0.9px;text-transform:uppercase;color:var(--secondary);margin-bottom:6px;}
+.sval{font-size:28px;font-weight:800;letter-spacing:-0.6px;color:var(--text);line-height:1;}
+.sval.green{color:var(--green);} .sval.red{color:var(--red);}
+.snote{font-size:11px;color:var(--secondary);margin-top:4px;}
 
 /* TOTAL BLOCK */
-.tblock{{background:var(--text);border-radius:8px;padding:13px 16px;margin-top:14px;display:flex;justify-content:space-between;align-items:center;}}
-.tblabel{{font-size:11px;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;color:rgba(255,255,255,0.35);}}
-.tbval{{font-size:24px;font-weight:800;letter-spacing:-0.5px;color:var(--accent);}}
+.tblock{background:var(--text);border-radius:8px;padding:13px 16px;margin-top:14px;display:flex;justify-content:space-between;align-items:center;}
+.tblabel{font-size:11px;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;color:rgba(255,255,255,0.35);}
+.tbval{font-size:24px;font-weight:800;letter-spacing:-0.5px;color:var(--accent);}
 
 /* ALERT */
-.ablock{{background:var(--text);border-radius:var(--radius);padding:16px 18px;display:flex;align-items:flex-start;gap:12px;margin-top:14px;}}
-.aicon{{background:var(--accent);border-radius:6px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:13px;}}
-.atext{{font-size:12px;color:rgba(255,255,255,0.7);line-height:1.6;}}
-.atext strong{{color:white;font-weight:600;}}
+.ablock{background:var(--text);border-radius:var(--radius);padding:16px 18px;display:flex;align-items:flex-start;gap:12px;margin-top:14px;}
+.aicon{background:var(--accent);border-radius:6px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:13px;}
+.atext{font-size:12px;color:rgba(255,255,255,0.7);line-height:1.6;}
+.atext strong{color:white;font-weight:600;}
 
 /* BADGE */
-.by{{background:var(--text);color:var(--accent);padding:2px 10px;border-radius:5px;font-weight:800;letter-spacing:-0.4px;display:inline-block;}}
+.by{background:var(--text) !important;color:var(--accent) !important;padding:2px 10px;border-radius:5px;font-weight:800;letter-spacing:-0.4px;display:inline-block;}
 
 /* TAGS */
-.tag{{display:inline-block;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;padding:3px 8px;border-radius:4px;margin-top:8px;}}
-.tr{{background:#FFF0F0;color:var(--red);}} .tg{{background:#F0FBF6;color:var(--green);}} .tb{{background:var(--text);color:var(--accent);}}
+.tag{display:inline-block;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;padding:3px 8px;border-radius:4px;margin-top:8px;}
+.tr{background:#FFF0F0;color:var(--red);} .tg{background:#F0FBF6;color:var(--green);} .tb{background:var(--text);color:var(--accent);}
 
 /* FOOTER */
-footer{{margin-top:40px;padding-top:16px;border-top:1px solid var(--border);display:flex;justify-content:space-between;}}
-.fmeta{{font-size:11px;color:var(--secondary);}}
-.fconf{{font-size:11px;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;color:var(--secondary);}}
+footer{margin-top:40px;padding-top:16px;border-top:1px solid var(--border);display:flex;justify-content:space-between;}
+.fmeta{font-size:11px;color:var(--secondary);}
+.fconf{font-size:11px;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;color:var(--secondary);}
 
 /* TABLE */
-table{{width:100%;border-collapse:collapse;}}
-th{{font-size:11px;font-weight:600;letter-spacing:0.9px;text-transform:uppercase;color:var(--secondary);text-align:left;padding:8px 14px;border-bottom:1px solid var(--border);}}
-td{{font-size:13px;padding:10px 14px;border-bottom:1px solid var(--border);color:var(--text);}}
-tr:last-child td{{border-bottom:none;}} tr:hover td{{background:var(--bg);}}
+table{width:100%;border-collapse:collapse;}
+th{font-size:11px;font-weight:600;letter-spacing:0.9px;text-transform:uppercase;color:var(--secondary);text-align:left;padding:8px 14px;border-bottom:1px solid var(--border);}
+td{font-size:13px;padding:10px 14px;border-bottom:1px solid var(--border);color:var(--text);}
+tr:last-child td{border-bottom:none;} tr:hover td{background:var(--bg);}
 
 /* PIPE FLOW */
-.prow{{display:flex;align-items:stretch;margin-top:24px;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;}}
-.ptile{{flex:1;background:var(--white);border-right:1px solid var(--border);padding:22px 18px;position:relative;}}
-.ptile:last-child{{border-right:none;}}
-.ptile.feat{{background:var(--accent);}}
-.ptile.feat .psl{{color:rgba(0,0,0,0.45);}} .ptile.feat .psn{{color:var(--text);}} .ptile.feat .psd{{color:rgba(0,0,0,0.55);}} .ptile.feat .parr{{background:var(--text);color:var(--accent);}}
-.parr{{position:absolute;right:-11px;top:50%;transform:translateY(-50%);z-index:3;width:22px;height:22px;background:var(--border);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--secondary);font-weight:700;}}
-.ptile:last-child .parr{{display:none;}}
-.psl{{font-size:11px;font-weight:600;letter-spacing:0.9px;text-transform:uppercase;color:var(--secondary);margin-bottom:6px;}}
-.psn{{font-size:30px;font-weight:800;letter-spacing:-0.7px;color:var(--text);line-height:1;margin-bottom:6px;}}
-.psd{{font-size:11px;color:var(--secondary);line-height:1.5;}}
+.prow{display:flex;align-items:stretch;margin-top:24px;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;}
+.ptile{flex:1;background:var(--white);border-right:1px solid var(--border);padding:22px 18px;position:relative;}
+.ptile:last-child{border-right:none;}
+.ptile.feat{background:var(--accent);}
+.ptile.feat .psl{color:rgba(0,0,0,0.45);} .ptile.feat .psn{color:var(--text);} .ptile.feat .psd{color:rgba(0,0,0,0.55);} .ptile.feat .parr{background:var(--text);color:var(--accent);}
+.parr{position:absolute;right:-11px;top:50%;transform:translateY(-50%);z-index:3;width:22px;height:22px;background:var(--border);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--secondary);font-weight:700;}
+.ptile:last-child .parr{display:none;}
+.psl{font-size:11px;font-weight:600;letter-spacing:0.9px;text-transform:uppercase;color:var(--secondary);margin-bottom:6px;}
+.psn{font-size:30px;font-weight:800;letter-spacing:-0.7px;color:var(--text);line-height:1;margin-bottom:6px;}
+.psd{font-size:11px;color:var(--secondary);line-height:1.5;}
 
 /* FUNNEL */
-.frow{{margin-bottom:3px;}}
-.ftrack{{position:relative;height:46px;background:var(--white);border:1px solid var(--border);border-radius:6px;overflow:hidden;display:flex;align-items:center;padding:0 16px;}}
-.ffill{{position:absolute;left:0;top:0;bottom:0;background:var(--accent);opacity:0.18;border-radius:6px 0 0 6px;}}
-.ffill.fg{{background:var(--green);opacity:0.14;}}
-.fbl{{font-size:12px;font-weight:500;color:var(--secondary);z-index:1;position:relative;}}
-.fbv{{font-size:20px;font-weight:800;letter-spacing:-0.4px;color:var(--text);margin-left:auto;z-index:1;position:relative;}}
-.fbv.fg{{color:var(--green);}}
-.fdrop{{font-size:11px;color:var(--secondary);padding:3px 16px 7px;display:flex;align-items:center;gap:5px;}}
-.fdrop::before{{content:'↓';color:var(--red);font-size:10px;}}
-.fdrop.fc::before{{content:'→';color:var(--green);}}
+.frow{margin-bottom:3px;}
+.ftrack{position:relative;height:46px;background:var(--white);border:1px solid var(--border);border-radius:6px;overflow:hidden;display:flex;align-items:center;padding:0 16px;}
+.ffill{position:absolute;left:0;top:0;bottom:0;max-width:98%;background:var(--accent);opacity:0.18;border-radius:6px 0 0 6px;}
+.ffill.fg{background:var(--green);opacity:0.14;}
+.fbl{font-size:12px;font-weight:500;color:var(--secondary);z-index:1;position:relative;}
+.fbv{font-size:20px;font-weight:800;letter-spacing:-0.4px;color:var(--text);margin-left:auto;z-index:10;position:relative;}
+.fbv.fg{color:var(--green);}
+.fdrop{font-size:11px;color:var(--secondary);padding:3px 16px 7px;display:flex;align-items:center;gap:5px;}
+.fdrop::before{content:'↓';color:var(--red);font-size:10px;}
+.fdrop.fc::before{content:'→';color:var(--green);}
 
 /* SLIPPAGE */
-.sgrid{{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:24px;}}
-.sc{{background:var(--white);border:1px solid var(--border);border-radius:var(--radius);padding:22px;}}
-.smo{{font-size:11px;font-weight:700;letter-spacing:0.9px;text-transform:uppercase;color:var(--secondary);padding-bottom:12px;border-bottom:1px solid var(--border);margin-bottom:12px;}}
-.srow{{display:flex;justify-content:space-between;align-items:baseline;padding:7px 0;border-bottom:1px solid var(--border);}}
-.srow:last-of-type{{border-bottom:none;}}
-.srl{{font-size:12px;color:var(--secondary);}}
-.srv{{font-size:20px;font-weight:800;letter-spacing:-0.4px;color:var(--text);}}
-.srv.green{{color:var(--green);}} .srv.red{{color:var(--red);}}
-.stag{{display:inline-block;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;padding:3px 7px;border-radius:4px;margin-top:4px;margin-right:4px;}}
-.stc{{background:#F0FBF6;color:var(--green);}} .stl{{background:#FFF0F0;color:var(--red);}} .sts{{background:var(--bg);border:1px solid var(--border);color:var(--secondary);}}
-.lnote{{margin-top:12px;background:var(--accent);border-radius:6px;padding:8px 12px;font-size:11px;font-weight:700;color:var(--text);text-align:center;text-transform:uppercase;letter-spacing:0.4px;}}
+.sgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:24px;}
+.sc{background:var(--white);border:1px solid var(--border);border-radius:var(--radius);padding:22px;}
+.smo{font-size:11px;font-weight:700;letter-spacing:0.9px;text-transform:uppercase;color:var(--secondary);padding-bottom:12px;border-bottom:1px solid var(--border);margin-bottom:12px;}
+.srow{display:flex;justify-content:space-between;align-items:baseline;padding:7px 0;border-bottom:1px solid var(--border);}
+.srow:last-of-type{border-bottom:none;}
+.srl{font-size:12px;color:var(--secondary);}
+.srv{font-size:20px;font-weight:800;letter-spacing:-0.4px;color:var(--text);}
+.srv.green{color:var(--green);} .srv.red{color:var(--red);}
+.stag{display:inline-block;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;padding:3px 7px;border-radius:4px;margin-top:4px;margin-right:4px;}
+.stc{background:#F0FBF6;color:var(--green);} .stl{background:#FFF0F0;color:var(--red);} .sts{background:var(--bg);border:1px solid var(--border);color:var(--secondary);}
+.lnote{margin-top:12px;background:var(--accent);border-radius:6px;padding:8px 12px;font-size:11px;font-weight:700;color:var(--text);text-align:center;text-transform:uppercase;letter-spacing:0.4px;}
 
 /* SCENARIOS */
-.scgrid{{display:grid;grid-template-columns:repeat(3,1fr);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-top:24px;}}
-.sctile{{padding:28px 24px;border-right:1px solid var(--border);}}
-.sctile:last-child{{border-right:none;}}
-.sctile.under{{background:#FFF8F8;}} .sctile.base{{background:var(--white);}} .sctile.over{{background:#F5FFF9;}}
-.schead{{font-size:11px;font-weight:700;letter-spacing:0.9px;text-transform:uppercase;margin-bottom:6px;}}
-.sctile.under .schead{{color:var(--red);}} .sctile.base .schead{{color:var(--secondary);}} .sctile.over .schead{{color:var(--green);}}
-.scdesc{{font-size:11px;color:var(--secondary);line-height:1.7;margin-bottom:16px;border-bottom:1px solid var(--border);padding-bottom:14px;}}
-.scmr{{display:flex;justify-content:space-between;align-items:baseline;padding:6px 0;border-bottom:1px solid var(--border);}}
-.scmr:last-of-type{{border-bottom:none;margin-bottom:16px;}}
-.scml{{font-size:12px;color:var(--secondary);}}
-.scmv{{font-size:19px;font-weight:800;letter-spacing:-0.4px;}}
-.sctile.under .scmv{{color:var(--red);}} .sctile.base .scmv{{color:var(--text);}} .sctile.over .scmv{{color:var(--green);}}
-.sccond{{margin-top:14px;font-size:11px;color:var(--secondary);line-height:1.8;}}
-.sccond span{{display:block;}}
-.changed{{animation:pulse 0.35s ease;}}
-@keyframes pulse{{0%,100%{{opacity:1;}}50%{{opacity:0.35;}}}}
+.scgrid{display:grid;grid-template-columns:repeat(3,1fr);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-top:24px;}
+.sctile{padding:28px 24px;border-right:1px solid var(--border);}
+.sctile:last-child{border-right:none;}
+.sctile.under{background:#FFF8F8;} .sctile.base{background:var(--white);} .sctile.over{background:#F5FFF9;}
+.schead{font-size:11px;font-weight:700;letter-spacing:0.9px;text-transform:uppercase;margin-bottom:6px;}
+.sctile.under .schead{color:var(--red);} .sctile.base .schead{color:var(--secondary);} .sctile.over .schead{color:var(--green);}
+.scdesc{font-size:11px;color:var(--secondary);line-height:1.7;margin-bottom:16px;border-bottom:1px solid var(--border);padding-bottom:14px;}
+.scmr{display:flex;justify-content:space-between;align-items:baseline;padding:6px 0;border-bottom:1px solid var(--border);}
+.scmr:last-of-type{border-bottom:none;margin-bottom:16px;}
+.scml{font-size:12px;color:var(--secondary);}
+.scmv{font-size:19px;font-weight:800;letter-spacing:-0.4px;}
+.sctile.under .scmv{color:var(--red);} .sctile.base .scmv{color:var(--text);} .sctile.over .scmv{color:var(--green);}
+.sccond{margin-top:14px;font-size:11px;color:var(--secondary);line-height:1.8;}
+.sccond span{display:block;}
+.changed{animation:pulse 0.35s ease;}
+@keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.35;}}
 </style>
 </head>
 <body>
@@ -228,56 +170,56 @@ tr:last-child td{{border-bottom:none;}} tr:hover td{{background:var(--bg);}}
     <div class="gate-sub">Pipeline Intelligence</div>
     <div class="gate-prompt">Enter access code to continue</div>
     <div class="gate-boxes" id="gboxes">
-      {"".join(['<input type="password" maxlength="1" class="dbox" inputmode="text" autocomplete="off">' for _ in range(CODE_LENGTH)])}
+      <input type="password" maxlength="1" class="dbox" inputmode="text" autocomplete="off"><input type="password" maxlength="1" class="dbox" inputmode="text" autocomplete="off"><input type="password" maxlength="1" class="dbox" inputmode="text" autocomplete="off"><input type="password" maxlength="1" class="dbox" inputmode="text" autocomplete="off"><input type="password" maxlength="1" class="dbox" inputmode="text" autocomplete="off"><input type="password" maxlength="1" class="dbox" inputmode="text" autocomplete="off"><input type="password" maxlength="1" class="dbox" inputmode="text" autocomplete="off"><input type="password" maxlength="1" class="dbox" inputmode="text" autocomplete="off"><input type="password" maxlength="1" class="dbox" inputmode="text" autocomplete="off"><input type="password" maxlength="1" class="dbox" inputmode="text" autocomplete="off"><input type="password" maxlength="1" class="dbox" inputmode="text" autocomplete="off"><input type="password" maxlength="1" class="dbox" inputmode="text" autocomplete="off">
     </div>
     <div id="gate-error"></div>
   </div>
 </div>
 
 <script>
-(function(){{
-  const HASH="{CODE_HASH}";
-  const LEN={CODE_LENGTH};
+(function(){
+  const HASH="708c467d29675205fea7063dc4de638f66372063484dc86430609739b7fcc357";
+  const LEN=12;
   const SK="kcos_pi_v1";
-  if(sessionStorage.getItem(SK)==="1"){{document.getElementById('gate').style.display='none';return;}}
+  if(sessionStorage.getItem(SK)==="1"){document.getElementById('gate').style.display='none';return;}
   const boxes=document.querySelectorAll('.dbox');
   boxes[0].focus();
-  async function sha256(msg){{
+  async function sha256(msg){
     const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(msg));
     return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
-  }}
-  boxes.forEach((box,i)=>{{
-    box.addEventListener('input',e=>{{
+  }
+  boxes.forEach((box,i)=>{
+    box.addEventListener('input',e=>{
       box.value=e.target.value.slice(-1);
       if(box.value&&i<LEN-1)boxes[i+1].focus();
       const code=Array.from(boxes).map(b=>b.value).join('');
       if(code.length===LEN)check(code);
-    }});
-    box.addEventListener('keydown',e=>{{
+    });
+    box.addEventListener('keydown',e=>{
       if(e.key==='Backspace'&&!box.value&&i>0)boxes[i-1].focus();
-    }});
-    box.addEventListener('paste',e=>{{
+    });
+    box.addEventListener('paste',e=>{
       e.preventDefault();
       const p=(e.clipboardData||window.clipboardData).getData('text').slice(0,LEN);
-      p.split('').forEach((c,j)=>{{if(boxes[j])boxes[j].value=c;}});
+      p.split('').forEach((c,j)=>{if(boxes[j])boxes[j].value=c;});
       if(p.length===LEN)check(p);
-    }});
-  }});
-  async function check(code){{
+    });
+  });
+  async function check(code){
     const h=await sha256(code);
-    if(h===HASH){{
+    if(h===HASH){
       sessionStorage.setItem(SK,"1");
       const g=document.getElementById('gate');
       g.style.transition='opacity 0.3s';g.style.opacity='0';
       setTimeout(()=>g.style.display='none',300);
-    }}else{{
+    }else{
       document.getElementById('gate-error').textContent='Incorrect code. Try again.';
-      boxes.forEach(b=>{{b.value='';b.classList.add('err');}});
+      boxes.forEach(b=>{b.value='';b.classList.add('err');});
       setTimeout(()=>boxes.forEach(b=>b.classList.remove('err')),500);
       boxes[0].focus();
-    }}
-  }}
-}})();
+    }
+  }
+})();
 </script>
 
 
@@ -295,20 +237,20 @@ tr:last-child td{{border-bottom:none;}} tr:hover td{{background:var(--bg);}}
 <div class="cbar">
   <div class="cg">
     <span class="cl">Close Rate</span>
-    <input type="range" id="sl-cr" min="8" max="15" step="0.5" value="{DEFAULT_CR}" oninput="update()">
-    <span class="cv" id="v-cr">{DEFAULT_CR}%</span>
+    <input type="range" id="sl-cr" min="8" max="15" step="0.5" value="9.5" oninput="update()">
+    <span class="cv" id="v-cr">9.5%</span>
   </div>
   <div class="csep"></div>
   <div class="cg">
     <span class="cl">ACV</span>
-    <input type="range" id="sl-acv" min="40" max="75" step="1" value="{DEFAULT_ACV}" oninput="update()">
-    <span class="cv" id="v-acv">${DEFAULT_ACV}K</span>
+    <input type="range" id="sl-acv" min="40" max="75" step="1" value="51" oninput="update()">
+    <span class="cv" id="v-acv">$51K</span>
   </div>
   <div class="csep"></div>
   <div class="cg">
     <span class="cl">Leads / Mo</span>
-    <input type="range" id="sl-leads" min="40" max="300" step="5" value="{DEFAULT_LEADS}" oninput="update()">
-    <span class="cv" id="v-leads">{DEFAULT_LEADS}</span>
+    <input type="range" id="sl-leads" min="40" max="300" step="5" value="265" oninput="update()">
+    <span class="cv" id="v-leads">265</span>
   </div>
   <div class="csep"></div>
   <span class="cbadge">All pages update live</span>
@@ -367,7 +309,7 @@ tr:last-child td{{border-bottom:none;}} tr:hover td{{background:var(--bg);}}
     <div class="stat"><div class="slabel">Close Rate</div><div class="sval" id="s1-cr">9.5%</div><div class="snote">MQL → Closed Won</div></div>
   </div>
 
-  <footer><span class="fmeta">Pipeline Intelligence · KeychainOS · {GENERATED_AT}</span><span class="fconf">Confidential</span></footer>
+  <footer><span class="fmeta">Pipeline Intelligence · KeychainOS · Mar 09, 2026</span><span class="fconf">Confidential</span></footer>
 </div>
 
 
@@ -419,7 +361,7 @@ tr:last-child td{{border-bottom:none;}} tr:hover td{{background:var(--bg);}}
   </div>
   <div class="ablock"><div class="aicon">→</div><div class="atext"><strong>Diagnosis:</strong> Past 8 reps, per-rep output degrades without additional lead volume. Pipeline capacity is the constraint, not headcount. Efficiency drops 47% from 6→11 reps while total closes remain flat.</div></div>
 
-  <footer><span class="fmeta">Pipeline Intelligence · KeychainOS · {GENERATED_AT}</span><span class="fconf">Confidential</span></footer>
+  <footer><span class="fmeta">Pipeline Intelligence · KeychainOS · Mar 09, 2026</span><span class="fconf">Confidential</span></footer>
 </div>
 
 
@@ -467,7 +409,7 @@ tr:last-child td{{border-bottom:none;}} tr:hover td{{background:var(--bg);}}
     </div>
   </div>
 
-  <footer><span class="fmeta">Pipeline Intelligence · KeychainOS · {GENERATED_AT}</span><span class="fconf">Confidential</span></footer>
+  <footer><span class="fmeta">Pipeline Intelligence · KeychainOS · Mar 09, 2026</span><span class="fconf">Confidential</span></footer>
 </div>
 
 
@@ -526,7 +468,7 @@ tr:last-child td{{border-bottom:none;}} tr:hover td{{background:var(--bg);}}
     <div class="stat"><div class="slabel">Monthly Proj. Quota</div><div class="sval by" id="s4-q" style="font-size:28px;">25</div><div class="snote">Steady-state · <span id="s4-ln">265</span> leads/mo</div></div>
   </div>
 
-  <footer><span class="fmeta">Pipeline Intelligence · KeychainOS · {GENERATED_AT}</span><span class="fconf">Confidential</span></footer>
+  <footer><span class="fmeta">Pipeline Intelligence · KeychainOS · Mar 09, 2026</span><span class="fconf">Confidential</span></footer>
 </div>
 
 
@@ -596,35 +538,35 @@ tr:last-child td{{border-bottom:none;}} tr:hover td{{background:var(--bg);}}
     </div>
   </div>
 
-  <footer><span class="fmeta">Pipeline Intelligence · KeychainOS · {GENERATED_AT}</span><span class="fconf">Confidential</span></footer>
+  <footer><span class="fmeta">Pipeline Intelligence · KeychainOS · Mar 09, 2026</span><span class="fconf">Confidential</span></footer>
 </div>
 
 
 <script>
 // ── HELPERS ──────────────────────────────────────────────
-const SW_R = {SW_RATIO:.6f};
-const IMPL_R = {IMPL_RATIO:.6f};
-const UNDER_CR_MULT = {UNDER_CR_MULT};
-const OVER_CR_MULT = {OVER_CR_MULT};
+const SW_R = 0.705882;
+const IMPL_R = 0.294118;
+const UNDER_CR_MULT = 0.68;
+const OVER_CR_MULT = 1.32;
 
-function fmtM(n) {{
+function fmtM(n) {
   if(n>=1000000) return '$'+(n/1000000).toFixed(2)+'M';
   return '$'+(n/1000).toFixed(0)+'K';
-}}
-function fmtK(n) {{ return '$'+Math.round(n/1000)+'K'; }}
-function set(id,val) {{
+}
+function fmtK(n) { return '$'+Math.round(n/1000)+'K'; }
+function set(id,val) {
   const el=document.getElementById(id);
   if(!el)return;
   const v=String(val);
-  if(el.textContent!==v){{el.textContent=v;el.classList.remove('changed');void el.offsetWidth;el.classList.add('changed');}}
-}}
-function setHtml(id,html) {{
+  if(el.textContent!==v){el.textContent=v;el.classList.remove('changed');void el.offsetWidth;el.classList.add('changed');}
+}
+function setHtml(id,html) {
   const el=document.getElementById(id);
   if(el)el.innerHTML=html;
-}}
+}
 
 // ── CORE MODEL ────────────────────────────────────────────
-function model(cr, acv, leads) {{
+function model(cr, acv, leads) {
   const crd = cr/100;
   const proj = Math.round(leads * crd);
   const cw = Math.round(proj * 0.8);
@@ -653,7 +595,7 @@ function model(cr, acv, leads) {{
   const sql = Math.round(leads * 0.196);
 
   // Scenarios — vary CR only, same leads
-  function sc(crMult) {{
+  function sc(crMult) {
     const sCr = crd * crMult;
     const sProj = Math.round(leads * sCr);
     const sCw = Math.round(sProj * 0.8);
@@ -664,15 +606,15 @@ function model(cr, acv, leads) {{
     const sM2r = Math.round(sM2carry * 0.8);        // 80% of M2 carries close in M3
     const sM1slipped = sCarry - sM1r;               // M1 deals that slipped past M2
     const sM3cw = sCw + sM2r + sM1slipped;
-    return {{
+    return {
       cr: (sCr*100).toFixed(1),
       cw: sCw,
       m1: sCw * acv,
       m2: sM2cw * acv,
       m3: sM3cw * acv,
       q: (sCw + sM2cw + sM3cw) * acv
-    }};
-  }}
+    };
+  }
 
   const under = sc(UNDER_CR_MULT);
   const over  = sc(OVER_CR_MULT);
@@ -681,46 +623,46 @@ function model(cr, acv, leads) {{
   const swAmt = Math.round(acv * SW_R / 1000);
   const implAmt = Math.round(acv * IMPL_R / 1000);
 
-  return {{
+  return {
     cr,acv,leads,proj,cw,carry,
     m1Resolved,m1SlippedToM3,m2cw,m3cw,
     arrM1,arrM2,arrM3,arrQ,totalQ,
     response,mql,sql,
     under,over,wk,swAmt,implAmt
-  }};
-}}
+  };
+}
 
 // ── BUILD REP TABLE ───────────────────────────────────────
-function statusBadge(val) {{
+function statusBadge(val) {
   const v = parseFloat(val);
   if (v >= 3.5) return `<span style="background:#F0FBF6;color:#1A9E5F;font-size:10px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;padding:3px 8px;border-radius:4px;">Efficient</span>`;
   if (v >= 2.5) return `<span style="background:#0A0A0A;color:#F5D000;font-size:10px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;padding:3px 8px;border-radius:4px;">Optimal</span>`;
   if (v >= 2.0) return `<span style="background:#FFF4E8;color:#B05010;font-size:10px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;padding:3px 8px;border-radius:4px;">Diminishing</span>`;
   return `<span style="background:#FFF0F0;color:#E03030;font-size:10px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;padding:3px 8px;border-radius:4px;">Lead-constrained</span>`;
-}}
+}
 
-function buildRepTable(d) {{
+function buildRepTable(d) {
   const rows=[
-    {{r:6,  t:4, a:(d.cw/6).toFixed(1)}},
-    {{r:8,  t:3, a:(d.cw/8).toFixed(1)}},
-    {{r:10, t:2, a:(d.cw/10).toFixed(1)}},
-    {{r:11, t:2, a:(d.cw/11).toFixed(1)}},
+    {r:6,  t:4, a:(d.cw/6).toFixed(1)},
+    {r:8,  t:3, a:(d.cw/8).toFixed(1)},
+    {r:10, t:2, a:(d.cw/10).toFixed(1)},
+    {r:11, t:2, a:(d.cw/11).toFixed(1)},
   ];
   const tb=document.getElementById('rep-tbody');
   tb.innerHTML=rows.map(r=>`
     <tr>
-      <td>${{r.r}} Reps</td>
-      <td>${{r.t}} / mo</td>
-      <td style="font-size:18px;font-weight:800;letter-spacing:-0.3px;color:${{parseFloat(r.a)<2?'#E03030':parseFloat(r.a)<2.5?'#B05010':parseFloat(r.a)<3.5?'inherit':'#1A9E5F'}}">${{r.a}}</td>
-      <td>~${{d.cw}}</td>
-      <td>${{fmtM(d.arrM1)}}</td>
-      <td>${{statusBadge(r.a)}}</td>
+      <td>${r.r} Reps</td>
+      <td>${r.t} / mo</td>
+      <td style="font-size:18px;font-weight:800;letter-spacing:-0.3px;color:${parseFloat(r.a)<2?'#E03030':parseFloat(r.a)<2.5?'#B05010':parseFloat(r.a)<3.5?'inherit':'#1A9E5F'}">${r.a}</td>
+      <td>~${d.cw}</td>
+      <td>${fmtM(d.arrM1)}</td>
+      <td>${statusBadge(r.a)}</td>
     </tr>
   `).join('');
-}}
+}
 
 // ── MAIN UPDATE ───────────────────────────────────────────
-function update() {{
+function update() {
   const cr    = parseFloat(document.getElementById('sl-cr').value);
   const acv   = parseInt(document.getElementById('sl-acv').value) * 1000;
   const leads = parseInt(document.getElementById('sl-leads').value);
@@ -760,19 +702,19 @@ function update() {{
   set('f-leads', d.leads);
   set('f-d1', '~'+Math.round(d.leads*0.50)+' lost at initial outreach / unresponsive');
   set('f-res', d.response);
-  document.getElementById('f-f2').style.width=(d.response/d.leads*100)+'%';
+  document.getElementById('f-f2').style.width=Math.min(d.response/d.leads*100,98)+'%';
   set('f-d2', '~'+(d.response-d.mql)+' disqualified at CS/AM qualification');
   set('f-mql', d.mql);
-  document.getElementById('f-f3').style.width=(d.mql/d.leads*100)+'%';
+  document.getElementById('f-f3').style.width=Math.min(d.mql/d.leads*100,98)+'%';
   set('f-d3', '~'+(d.mql-d.sql)+' lost in discovery / no product fit');
   set('f-sql', d.sql);
-  document.getElementById('f-f4').style.width=(d.sql/d.leads*100)+'%';
+  document.getElementById('f-f4').style.width=Math.min(d.sql/d.leads*100,98)+'%';
   set('f-d4', '~'+(d.sql-d.proj)+' lost during proposal / evaluation');
   set('f-proj', d.proj);
-  document.getElementById('f-f5').style.width=(d.proj/d.leads*100)+'%';
+  document.getElementById('f-f5').style.width=Math.min(d.proj/d.leads*100,98)+'%';
   set('f-cn', d.carry+' of '+d.proj+' carry to Month 2 — designed into model');
   set('f-cw', d.cw);
-  document.getElementById('f-f6').style.width=(d.cw/d.leads*100)+'%';
+  document.getElementById('f-f6').style.width=Math.min(d.cw/d.leads*100,98)+'%';
   set('f-ratio', (d.leads/d.proj).toFixed(1));
   set('f-rn', d.leads+' ÷ '+d.proj+' projected = '+(d.leads/d.proj).toFixed(1)+':1');
   set('f-acv', fmtK(acv));
@@ -809,26 +751,14 @@ function update() {{
   set('sc-du', '−'+fmtM(deltaU)); set('sc-dun', fmtM(u.q)+' vs '+fmtM(b.arrQ));
   set('sc-do', '+'+fmtM(deltaO)); set('sc-don', fmtM(o.q)+' vs '+fmtM(b.arrQ));
   set('sc-bn', cr+'% close · '+d.leads+' leads / mo');
-}}
+}
 
-function show(idx) {{
+function show(idx) {
   document.querySelectorAll('.page').forEach((p,i)=>p.classList.toggle('active',i===idx));
   document.querySelectorAll('.nav-btn').forEach((b,i)=>b.classList.toggle('active',i===idx));
-}}
+}
 
 update();
 </script>
 </body>
-</html>"""
-
-
-def main():
-    html = build_html()
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-        f.write(html)
-    print(f"Built {OUTPUT_FILE} — {GENERATED_AT}")
-    print(f"Access code hash: {CODE_HASH[:16]}...")
-
-
-if __name__ == "__main__":
-    main()
+</html>
