@@ -28,13 +28,13 @@ CODE_HASH     = hashlib.sha256("Pipeline2026".encode()).hexdigest()
 CODE_LENGTH   = 12
 
 # Model defaults (these become the slider start positions)
-DEFAULT_CR    = 9.5    # Close rate % (slider: 8–12)
+DEFAULT_CR    = 9.5    # Close rate % (slider: 8–25)
 DEFAULT_ACV   = 51     # ACV in $K    (slider: 40–75)
 DEFAULT_LEADS = 265    # Leads/month  (slider: 200–300)
 
 # Scenario multipliers (applied to close rate only; lead volume stays constant)
-UNDER_CR_MULT = 0.68   # e.g. 9.5% → 6.5%
-OVER_CR_MULT  = 1.32   # e.g. 9.5% → 12.5%
+# Over scenario is capped at 25% max to prevent unrealistic output at high CR inputs
+CR_DELTA      = 3.0    # Scenario variance ±pp additive offset from baseline CR
 
 # Deal structure (proportion of ACV)
 SW_RATIO      = 36/51  # Software portion
@@ -295,7 +295,7 @@ tr:last-child td{{border-bottom:none;}} tr:hover td{{background:var(--bg);}}
 <div class="cbar">
   <div class="cg">
     <span class="cl">Close Rate</span>
-    <input type="range" id="sl-cr" min="8" max="15" step="0.5" value="{DEFAULT_CR}" oninput="update()">
+    <input type="range" id="sl-cr" min="8" max="25" step="0.5" value="{DEFAULT_CR}" oninput="update()">
     <span class="cv" id="v-cr">{DEFAULT_CR}%</span>
   </div>
   <div class="csep"></div>
@@ -604,8 +604,9 @@ tr:last-child td{{border-bottom:none;}} tr:hover td{{background:var(--bg);}}
 // ── HELPERS ──────────────────────────────────────────────
 const SW_R = {SW_RATIO:.6f};
 const IMPL_R = {IMPL_RATIO:.6f};
-const UNDER_CR_MULT = {UNDER_CR_MULT};
-const OVER_CR_MULT = {OVER_CR_MULT};
+const CR_DELTA = {CR_DELTA};  // ±pp additive variance
+
+
 
 function fmtM(n) {{
   if(n>=1000000) return '$'+(n/1000000).toFixed(2)+'M';
@@ -630,42 +631,43 @@ function model(cr, acv, leads) {{
   const cw = Math.round(proj * 0.8);
   const carry = proj - cw;
 
-  // M2: cw from fresh pipeline + resolved M1 carries
-  const m1Resolved = Math.round(carry * 0.8);  // 4 of 5
-  const m2cw = cw + m1Resolved;                 // 20 + 4 = 24
+  // M2: closed-window deals from fresh pipeline + resolved M1 carries
+  const m1Resolved = Math.round(carry * 0.8);  // 80% of M1 carry closes in M2
+  const m2cw = cw + m1Resolved;
   const arrM2 = m2cw * acv;
 
-  // M3: fresh pipeline closes + M2 carries resolving + M1 deal that slipped past M2
-  // M2 carry = same 20% rate applied to M2's new projected closes
+  // M3: fresh pipeline closes + M2 carries resolving + M1 residual that slipped past M2
   const m2Carry = carry;                         // M2 generates same carry count as M1
   const m2Resolved = Math.round(m2Carry * 0.8); // 80% of M2 carries close in M3
-  const m1SlippedToM3 = carry - m1Resolved;      // M1 deals that didn't close in M2 (1)
-  const m3cw = cw + m2Resolved + m1SlippedToM3; // 20 + 4 + 1 = 25
+  const m1SlippedToM3 = carry - m1Resolved;      // M1 deals that didn't close in M2
+  const m3cw = cw + m2Resolved + m1SlippedToM3;
   const arrM3 = m3cw * acv;
 
   const arrM1 = cw * acv;
   const arrQ = arrM1 + arrM2 + arrM3;
   const totalQ = cw + m2cw + m3cw;
 
-  // Funnel
+  // Funnel — response/MQL/SQL are lead-quality rates, independent of close rate
   const response = Math.round(leads * 0.50);
   const mql = Math.round(leads * 0.305);
   const sql = Math.round(leads * 0.196);
 
   // Scenarios — vary CR only, same leads
-  function sc(crMult) {{
-    const sCr = crd * crMult;
+  // Scenarios use additive ±CR_DELTA pp offset from baseline CR
+  function sc(delta) {{
+    const sCrPct = Math.max(0.1, cr + delta);
+    const sCr = sCrPct / 100;
     const sProj = Math.round(leads * sCr);
     const sCw = Math.round(sProj * 0.8);
     const sCarry = sProj - sCw;
     const sM1r = Math.round(sCarry * 0.8);
     const sM2cw = sCw + sM1r;
-    const sM2carry = sCarry;                        // M2 carry rate same as M1
-    const sM2r = Math.round(sM2carry * 0.8);        // 80% of M2 carries close in M3
-    const sM1slipped = sCarry - sM1r;               // M1 deals that slipped past M2
+    const sM2carry = sCarry;
+    const sM2r = Math.round(sM2carry * 0.8);
+    const sM1slipped = sCarry - sM1r;
     const sM3cw = sCw + sM2r + sM1slipped;
     return {{
-      cr: (sCr*100).toFixed(1),
+      cr: sCrPct.toFixed(1),
       cw: sCw,
       m1: sCw * acv,
       m2: sM2cw * acv,
@@ -674,8 +676,8 @@ function model(cr, acv, leads) {{
     }};
   }}
 
-  const under = sc(UNDER_CR_MULT);
-  const over  = sc(OVER_CR_MULT);
+  const under = sc(-CR_DELTA);
+  const over  = sc(+CR_DELTA);
 
   const wk = Math.round(leads / 4.33);
   const swAmt = Math.round(acv * SW_R / 1000);
