@@ -1,236 +1,760 @@
 """
-build.py — KeychainOS Pipeline Intelligence Dashboard
-Generates index.html as a static site deployed via GitHub Pages.
-
-CONFIGURATION
-─────────────
-All tunable parameters are in the CONFIG block below.
-The generated index.html is the site — do not edit it manually.
-
-ACCESS CODE
-───────────
-To change the access code:
-  1. Pick a new code (any length matching CODE_LENGTH)
-  2. Run: python3 -c "import hashlib; print(hashlib.sha256('YOURCODE'.encode()).hexdigest())"
-  3. Paste the result into CODE_HASH below
-  Current code: Pipeline2026
+build.py - KeychainOS Funnel Dashboard
+Handles both pivoted (wide) and unpivoted (long) data formats from Google Sheets.
+Supports a second ICP-filtered tab with a dataset toggle in the Cohort Filters section.
 """
 
-import hashlib
+import csv, io, hashlib, urllib.request
 from datetime import datetime
+from collections import defaultdict
 
-# ── CONFIG ────────────────────────────────────────────────────────────────────
-OUTPUT_FILE   = "index.html"
+# ── CONFIG ───────────────────────────────────────────────────────────────────
+SHEET_ID    = "1beenLANcaT3YZkqnD8uh-KssmxDTpKVGXfakHFNNB7k"
+DATA_URL    = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=0"
 
-# Access gate
-# Current code: Pipeline2026
-CODE_HASH     = hashlib.sha256("Pipeline2026".encode()).hexdigest()
-CODE_LENGTH   = 12
+# ── SET THIS to your second tab's gid (number after gid= in the URL when on that tab) ──
+ICP_GID     = "1467538758"
+ICP_URL     = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={ICP_GID}"
 
-# Model defaults (these become the slider start positions)
-DEFAULT_CR    = 9.5    # Close rate % (slider: 8–25)
-DEFAULT_ACV   = 51     # ACV in $K    (slider: 40–75)
-DEFAULT_LEADS = 265    # Leads/month  (slider: 200–300)
+OUTPUT_FILE = "index.html"
 
-# Scenario multipliers (applied to close rate only; lead volume stays constant)
-# Over scenario is capped at 25% max to prevent unrealistic output at high CR inputs
-CR_DELTA      = 3.0    # Scenario variance ±pp additive offset from baseline CR
+# ── ACCESS CODE ──────────────────────────────────────────────────────────────
+CODE_HASH  = "46de5fb173c5ab12d2bbe17bbd05db3d902d8b042bba7f171945eeb281ab9d39"
+CODE_LENGTH = 12
+# ─────────────────────────────────────────────────────────────────────────────
 
-# Deal structure (proportion of ACV)
-SW_RATIO      = 36/51  # Software portion
-IMPL_RATIO    = 15/51  # Implementation portion
+STAGE_META = {
+    1:  {"label": "First Call Scheduled",      "short": "#first call"},
+    2:  {"label": "First Meeting Completed",   "short": "#meeting done"},
+    3:  {"label": "Initial Demo Scheduled",    "short": "#demo scheduled"},
+    4:  {"label": "Initial Demo Completed",    "short": "#demo completed"},
+    5:  {"label": "Second Demo Scheduled",     "short": "#2nd demo sched"},
+    6:  {"label": "Second Demo Completed",     "short": "#2nd demo done"},
+    7:  {"label": "Proposal Meeting Scheduled","short": "#proposal mtg"},
+    8:  {"label": "Proposal Sent",             "short": "#proposal sent"},
+    9:  {"label": "Service Agreement Sent",    "short": "#service agg"},
+    10: {"label": "Closed Lost",               "short": "#closed lost"},
+    11: {"label": "Closed Won",                "short": "#closed won"},
+}
 
-# Carry model
-CARRY_RATE    = 0.20   # % of projected closes that push to next month
-CARRY_RESOLVE = 0.80   # % of carried deals that eventually close
-M1_RESIDUAL   = True   # Whether ~1 M1 deal trickles to M3
+PALETTE = [
+    "#1d4ed8","#7c3aed","#059669","#d97706","#dc2626",
+    "#0891b2","#db2777","#65a30d","#ea580c","#6d28d9","#0f766e"
+]
 
-# Funnel drop-off rates (approximate)
-RESPONSE_RATE = 0.50   # % of raw leads that respond
-MQL_RATE      = 0.305  # % of raw leads that reach MQL
-SQL_RATE      = 0.196  # % of raw leads that reach SQL
+def fetch_data(url):
+    print(f"Fetching: {url}")
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req) as r:
+        return r.read().decode("utf-8")
 
-# Generated timestamp
-GENERATED_AT  = datetime.utcnow().strftime("%b %d, %Y")
-# ──────────────────────────────────────────────────────────────────────────────
+def parse_week_start(w):
+    s = w.split(" - ")[0].strip()
+    for fmt in ("%b %d, %Y", "%B %d, %Y"):
+        try: return datetime.strptime(s, fmt)
+        except ValueError: pass
+    return datetime.min
+
+def short_week(w):
+    s = w.split(" - ")[0].strip()
+    for fmt in ("%b %d, %Y", "%B %d, %Y"):
+        try: return datetime.strptime(s, fmt).strftime("%b %d")
+        except ValueError: pass
+    return w[:6]
+
+def is_week_col(h):
+    return " - " in h and any(m in h for m in
+        ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"])
+
+def parse_csv(raw):
+    delimiter = "\t" if "\t" in raw.split("\n")[0] else ","
+    reader = csv.DictReader(io.StringIO(raw), delimiter=delimiter)
+    rows = list(reader)
+    if not rows:
+        raise ValueError("No data rows found")
+    headers = list(rows[0].keys())
+    print(f"Headers: {headers[:6]}...")
+
+    week_headers = [h for h in headers if is_week_col(h)]
+    has_count_col = any(h.strip().lower() == "count" for h in headers)
+
+    if week_headers:
+        print("Detected: PIVOTED (wide) format")
+        return parse_pivoted(rows, headers, week_headers)
+    elif has_count_col:
+        print("Detected: LONG (unpivoted) format")
+        return parse_long(rows, headers)
+    else:
+        raise ValueError(f"Cannot detect format. Headers: {headers}")
+
+def parse_pivoted(rows, headers, week_headers):
+    sn_col    = next((h for h in headers if h.strip().lower() == "sn"), None)
+    stage_col = next((h for h in headers if "funnel" in h.lower() or "stage" in h.lower()), None)
+    if not sn_col or not stage_col:
+        raise ValueError(f"Missing sn or stage column. Found: {headers}")
+
+    weeks_sorted = sorted(week_headers, key=parse_week_start)
+    week_labels  = [short_week(w) for w in weeks_sorted]
+
+    stages = []
+    for row in rows:
+        try:
+            sn = int(float(row[sn_col]))
+        except (ValueError, KeyError):
+            continue
+        if sn not in STAGE_META:
+            continue
+        values = []
+        for wh in weeks_sorted:
+            v = row.get(wh, "")
+            try:
+                values.append(int(float(v)) if str(v).strip() not in ("", "nan") else 0)
+            except ValueError:
+                values.append(0)
+        stages.append({
+            "sn": sn,
+            "label": STAGE_META[sn]["label"],
+            "short": STAGE_META[sn]["short"],
+            "total": sum(values),
+            "values": values,
+        })
+    stages.sort(key=lambda s: s["sn"])
+    return week_labels, stages
+
+def parse_long(rows, headers):
+    week_col  = next((h for h in headers if "week" in h.lower()), None)
+    sn_col    = next((h for h in headers if h.strip().lower() == "sn"), None)
+    count_col = next((h for h in headers if h.strip().lower() == "count"), None)
+    if not all([week_col, sn_col, count_col]):
+        raise ValueError(f"Missing columns for long format. Found: {headers}")
+
+    weeks_raw, seen = [], set()
+    stage_data = defaultdict(lambda: defaultdict(int))
+    for row in rows:
+        week = row[week_col].strip()
+        if not week: continue
+        if week not in seen:
+            weeks_raw.append(week)
+            seen.add(week)
+        try:
+            sn    = int(float(row[sn_col]))
+            count = int(float(row[count_col]))
+            stage_data[sn][week] += count
+        except (ValueError, KeyError):
+            continue
+
+    weeks_sorted = sorted(weeks_raw, key=parse_week_start)
+    week_labels  = [short_week(w) for w in weeks_sorted]
+    stages = []
+    for sn in sorted(STAGE_META.keys()):
+        if sn not in stage_data: continue
+        values = [stage_data[sn].get(w, 0) for w in weeks_sorted]
+        stages.append({"sn": sn, "label": STAGE_META[sn]["label"],
+                       "short": STAGE_META[sn]["short"],
+                       "total": sum(values), "values": values})
+    return week_labels, stages
+
+def peak_week(values, weeks):
+    if not values or max(values) == 0: return "N/A"
+    return weeks[values.index(max(values))]
+
+def safe_pct(n, d):
+    return f"{n/d*100:.1f}" if d else "N/A"
+
+def stages_to_js(stages, weeks):
+    js = "[\n"
+    for s in stages:
+        js += f'  {{sn:{s["sn"]},label:"{s["label"]}",short:"{s["short"]}",total:{s["total"]},values:{s["values"]},peak:"{peak_week(s["values"], weeks)}"}},\n'
+    js += "]"
+    return js
+
+def build_sales_motion_section():
+    AE   = '<span style="font-size:0.62rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:2px 7px;border-radius:3px;background:#0A0A0A;color:#FFFFFF;font-family:Inter,sans-serif;">AE</span>'
+    CS   = '<span style="font-size:0.62rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:2px 7px;border-radius:3px;background:#F5D000;color:#0A0A0A;font-family:Inter,sans-serif;">CS Team</span>'
+    PRE  = '<span style="font-size:0.62rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:2px 7px;border-radius:3px;background:#E8E8E4;color:#6B6B6B;font-family:Inter,sans-serif;">Pre-Pipeline</span>'
+    INF  = '<span style="font-size:0.62rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:2px 7px;border-radius:3px;background:#E8E8E4;color:#6B6B6B;font-family:Inter,sans-serif;">CS-Informed</span>'
+    CLO  = '<span style="font-size:0.62rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:2px 7px;border-radius:3px;background:#1A9E5F;color:#FFFFFF;font-family:Inter,sans-serif;">Close</span>'
+
+    def alert_red(msg):
+        return f'<div style="margin-top:7px;font-size:0.68rem;font-family:Inter,monospace;color:#E03030;background:#FFF8F8;border:1px solid #E03030;padding:3px 8px;border-radius:3px;display:inline-block;letter-spacing:0.02em;">{msg}</div>'
+
+    def alert_green(msg):
+        return f'<div style="margin-top:7px;font-size:0.68rem;font-family:Inter,monospace;color:#1A9E5F;background:#F5FFF9;border:1px solid #1A9E5F;padding:3px 8px;border-radius:3px;display:inline-block;letter-spacing:0.02em;">{msg}</div>'
+
+    def step_row(n, badges, name, desc, alert="", bg="", numbg=""):
+        return f"""<div style="display:flex;border-bottom:1px solid #E8E8E4;{bg}">
+            <div style="width:48px;flex-shrink:0;border-right:1px solid #E8E8E4;display:flex;align-items:flex-start;justify-content:center;padding:18px 0;font-size:0.65rem;font-weight:700;font-family:Inter,sans-serif;letter-spacing:0.08em;color:#6B6B6B;{numbg}">{n}</div>
+            <div style="padding:14px 18px;flex:1;">
+              <div style="margin-bottom:7px;display:flex;gap:6px;flex-wrap:wrap;">{badges}</div>
+              <div style="font-size:0.82rem;font-weight:600;margin-bottom:3px;color:#0A0A0A;letter-spacing:-0.01em;font-family:Inter,sans-serif;">{name}</div>
+              <div style="font-size:0.72rem;color:#6B6B6B;line-height:1.6;font-family:Inter,sans-serif;">{desc}</div>
+              {alert}
+            </div>
+          </div>"""
+
+    current_steps = "".join([
+        step_row("01", AE, "Intro Call",
+            "AE runs all qualification and discovery from scratch — no prior context. ICP fit, pain, and interest assessed entirely on the AE&#39;s time before pipeline is confirmed.",
+            alert_red("↑ AE capacity consumed on unqualified leads")),
+        step_row("02", AE, "1st Demo Call",
+            "Linear, scripted product walkthrough. Generalized overview not anchored to specific customer pain. Discovery continues here, late in the cycle.",
+            alert_red("↓ Largest drop-off in funnel at this stage")),
+        step_row("03", AE, "2nd Demo Call",
+            "Broader stakeholder demo. Additional use-case detail and discovery. Pain framing built on the fly rather than established upstream."),
+        step_row("04", AE, "Proposal Call",
+            "Proposal reviewed with customer. Weak connection between solution and stated pain due to shallow earlier discovery."),
+        step_row("05", AE, "Next Steps Call",
+            "Address outstanding hurdles and roadblocks. Work toward contract signature."),
+        step_row("06", AE, "Contract Sent",
+            "Service agreement delivered to prospect."),
+        step_row("07", CLO, "Closed Won",
+            "Deal closed."),
+    ])
+
+    proposed_steps = "".join([
+        step_row("—", CS + "&nbsp;" + PRE, "CS Qualification",
+            "Before AE engagement, CS vets the opportunity using a structured question set. Pain, urgency, stakeholder map, and implementation readiness are documented and passed to the AE as a pre-call brief.",
+            alert_green("Pipeline clock starts at Step 1 →"),
+            bg="background:#F5FFF9;", numbg="background:#F5FFF9;"),
+        step_row("01", AE + "&nbsp;" + INF, "Intro Call / 1st Demo",
+            "AE opens with targeted discovery to validate and deepen the CS findings — connecting identified pain directly to solution capability. Demo is built around confirmed problems, not a generic script.",
+            alert_green("↑ Demo relevance drives higher Stage 1→2 conversion")),
+        step_row("02", AE, "2nd Demo Call",
+            "Full stakeholder and decision-maker session. Demo is scoped to the use cases and objections most relevant to the economic buyer and key influencers — not a repeat of the first call."),
+        step_row("03", AE, "Proposal Call",
+            "Proposal is anchored to pain surfaced in CS qualification and confirmed in the intro call. Discussion is structured around anticipated objections — addressing concerns head-on rather than presenting features.",
+            alert_green("↑ Objection-led discussion replaces generic proposal walkthrough")),
+        step_row("04", AE, "Next Steps Call",
+            "Address outstanding hurdles and roadblocks. Work toward contract signature."),
+        step_row("05", AE, "Contract Sent",
+            "Service agreement delivered to customer."),
+        step_row("06", CLO, "Closed Won",
+            "Target: higher close rate through better qualification, demo precision, and proactive objection handling."),
+    ])
+
+    return f"""
+<section id="motion" style="padding:4rem 3rem;border-bottom:1px solid #E8E8E4;">
+  <div style="display:flex;align-items:baseline;gap:1rem;margin-bottom:2.5rem;">
+    <span style="font-size:0.65rem;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#6B6B6B;font-family:Inter,sans-serif;min-width:2rem;">06</span>
+    <h2 style="font-family:Inter,sans-serif;font-size:1.4rem;font-weight:700;letter-spacing:-0.6px;color:#0A0A0A;">Sales Motion Redesign</h2>
+    <span style="font-size:0.78rem;color:#6B6B6B;margin-left:auto;max-width:340px;text-align:right;line-height:1.5;font-family:Inter,sans-serif;">Recommendation to leadership — not subject to data refresh</span>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:#E8E8E4;border:1px solid #E8E8E4;border-radius:10px;overflow:hidden;margin-bottom:1.5rem;">
+    <div style="background:#FFFFFF;">
+      <div style="padding:1.25rem 1.5rem;border-bottom:1px solid #E8E8E4;display:flex;align-items:center;justify-content:space-between;">
+        <div>
+          <div style="font-size:0.65rem;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#6B6B6B;margin-bottom:4px;font-family:Inter,sans-serif;">01 — Current State</div>
+          <div style="font-size:1rem;font-weight:700;letter-spacing:-0.5px;color:#0A0A0A;font-family:Inter,sans-serif;">AE-Owned Full Cycle</div>
+          <div style="font-size:0.72rem;color:#6B6B6B;margin-top:2px;font-family:Inter,sans-serif;">Qualification through close carried entirely by AE</div>
+        </div>
+        <span style="font-size:0.62rem;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;padding:4px 10px;border-radius:4px;background:#FFF8F8;color:#E03030;border:1px solid #E03030;white-space:nowrap;font-family:Inter,sans-serif;">Current</span>
+      </div>
+      <div>{current_steps}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;border-top:1px solid #E8E8E4;">
+        <div style="padding:14px 18px;border-right:1px solid #E8E8E4;">
+          <div style="font-size:1.4rem;font-weight:700;color:#E03030;margin-bottom:2px;letter-spacing:-0.5px;font-family:Inter,sans-serif;">1.5–3 mo</div>
+          <div style="font-size:0.62rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#6B6B6B;font-family:Inter,sans-serif;">Avg. Cycle Length</div>
+        </div>
+        <div style="padding:14px 18px;">
+          <div style="font-size:1.4rem;font-weight:700;color:#E03030;margin-bottom:2px;letter-spacing:-0.5px;font-family:Inter,sans-serif;">7 Steps</div>
+          <div style="font-size:0.62rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#6B6B6B;font-family:Inter,sans-serif;">AE-Owned Stages</div>
+        </div>
+      </div>
+    </div>
+    <div style="background:#FFFFFF;">
+      <div style="padding:1.25rem 1.5rem;border-bottom:1px solid #E8E8E4;display:flex;align-items:center;justify-content:space-between;">
+        <div>
+          <div style="font-size:0.65rem;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#6B6B6B;margin-bottom:4px;font-family:Inter,sans-serif;">02 — Proposed State</div>
+          <div style="font-size:1rem;font-weight:700;letter-spacing:-0.5px;color:#0A0A0A;font-family:Inter,sans-serif;">CS-Qualified, AE Closes</div>
+          <div style="font-size:0.72rem;color:#6B6B6B;margin-top:2px;font-family:Inter,sans-serif;">CS qualifies pre-pipeline — AE enters demo-ready</div>
+        </div>
+        <span style="font-size:0.62rem;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;padding:4px 10px;border-radius:4px;background:#F5FFF9;color:#1A9E5F;border:1px solid #1A9E5F;white-space:nowrap;font-family:Inter,sans-serif;">Proposed</span>
+      </div>
+      <div>{proposed_steps}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;border-top:1px solid #E8E8E4;">
+        <div style="padding:14px 18px;border-right:1px solid #E8E8E4;">
+          <div style="font-size:1.4rem;font-weight:700;color:#1A9E5F;margin-bottom:2px;letter-spacing:-0.5px;font-family:Inter,sans-serif;">1–2 mo</div>
+          <div style="font-size:0.62rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#6B6B6B;font-family:Inter,sans-serif;">Target Cycle Length</div>
+        </div>
+        <div style="padding:14px 18px;">
+          <div style="font-size:1.4rem;font-weight:700;color:#1A9E5F;margin-bottom:2px;letter-spacing:-0.5px;font-family:Inter,sans-serif;">↑ Close %</div>
+          <div style="font-size:0.62rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#6B6B6B;font-family:Inter,sans-serif;">Via Qualification + Demo Quality</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="background:#0A0A0A;border:1px solid #0A0A0A;border-radius:10px;overflow:hidden;">
+    <div style="padding:14px 20px;border-bottom:1px solid #1E1E1E;display:flex;align-items:center;gap:10px;">
+      <div style="width:28px;height:28px;background:#F5D000;border-radius:4px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><circle cx="6" cy="6" r="5" stroke="#0A0A0A" stroke-width="1.5"/><path d="M6 4v3M6 8.5v.5" stroke="#0A0A0A" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </div>
+      <div style="font-size:0.65rem;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.4);font-family:Inter,sans-serif;">Key Funnel Findings — Basis for Recommendation</div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;padding:1.5rem;gap:2rem;">
+      <div>
+        <div style="font-size:2rem;font-weight:700;color:#F5D000;margin-bottom:4px;letter-spacing:-0.8px;font-family:Inter,sans-serif;">25.3%</div>
+        <div style="font-size:0.8rem;font-weight:600;margin-bottom:6px;color:#FFFFFF;letter-spacing:-0.3px;font-family:Inter,sans-serif;">Demo-to-2nd Demo Conversion</div>
+        <div style="font-size:0.72rem;color:rgba(255,255,255,0.5);line-height:1.7;font-family:Inter,sans-serif;">79 Initial Demos Completed → 20 Second Demos Scheduled. Largest absolute volume drop in the funnel. Root cause: generic, scripted demos with no pain-specific positioning established before the call.</div>
+      </div>
+      <div style="border-left:1px solid #1E1E1E;padding-left:2rem;">
+        <div style="font-size:2rem;font-weight:700;color:#F5D000;margin-bottom:4px;letter-spacing:-0.8px;font-family:Inter,sans-serif;">47.4%</div>
+        <div style="font-size:0.8rem;font-weight:600;margin-bottom:6px;color:#FFFFFF;letter-spacing:-0.3px;font-family:Inter,sans-serif;">Proposal-to-Contract Conversion</div>
+        <div style="font-size:0.72rem;color:rgba(255,255,255,0.5);line-height:1.7;font-family:Inter,sans-serif;">38 Proposals Sent → 18 Service Agreements. Late-stage dropout indicates unresolved objections entering the proposal stage. Structured objection handling in the proposal discussion directly addresses this gap.</div>
+      </div>
+    </div>
+  </div>
+</section>"""
 
 
-def build_html():
+def build_html(weeks, stages, icp_weeks, icp_stages, generated_at):
+    kpi  = {s["sn"]: s for s in stages}
+    top  = kpi[1]["total"] if 1 in kpi else 1
+
+    show_rate     = safe_pct(kpi[2]["total"], kpi[1]["total"]) if 2 in kpi and 1 in kpi else "N/A"
+    close_rate    = safe_pct(kpi[11]["total"], top) if 11 in kpi else "N/A"
+    prop_to_close = safe_pct(kpi[11]["total"], kpi[8]["total"]) if 11 in kpi and 8 in kpi else "N/A"
+    prop_top      = safe_pct(kpi[8]["total"], top) if 8 in kpi else "N/A"
+    demo_top      = safe_pct(kpi[4]["total"], top) if 4 in kpi else "N/A"
+    second_demo_r = safe_pct(kpi[5]["total"], kpi[4]["total"]) if 5 in kpi and 4 in kpi else "N/A"
+    loss_ratio    = f"{kpi[10]['total']/kpi[11]['total']:.1f}x" if 11 in kpi and kpi[11]["total"] else "N/A"
+    close_meeting = safe_pct(kpi[11]["total"], kpi[2]["total"]) if 11 in kpi and 2 in kpi else "N/A"
+    close_demo_rate = safe_pct(kpi[11]["total"], kpi[3]["total"]) if 11 in kpi and 3 in kpi else "N/A"
+    avg_weekly    = f"{top/len(weeks):.1f}" if weeks else "N/A"
+    peak_val      = max(kpi[1]["values"]) if 1 in kpi else 0
+    peak_wk       = peak_week(kpi[1]["values"], weeks) if 1 in kpi else "N/A"
+    vals_excl     = [v for v in kpi[1]["values"] if v != peak_val] if 1 in kpi else []
+    avg_excl      = f"{sum(vals_excl)/len(vals_excl):.1f}" if vals_excl else "N/A"
+    spike_mult    = f"{peak_val/(top/len(weeks)):.1f}" if weeks and top else "N/A"
+
+    sales_motion_html = build_sales_motion_section()
+
+    js_weeks      = str(weeks).replace("'", '"')
+    js_icp_weeks  = str(icp_weeks).replace("'", '"')
+    js_pal        = str(PALETTE).replace("'", '"')
+    js_stages     = stages_to_js(stages, weeks)
+    js_icp_stages = stages_to_js(icp_stages, icp_weeks)
+
+    # ICP summary stats for the toggle bar
+    icp_kpi = {s["sn"]: s for s in icp_stages}
+    icp_top = icp_kpi[1]["total"] if 1 in icp_kpi else 0
+    icp_close = safe_pct(icp_kpi[11]["total"], icp_top) if 11 in icp_kpi and icp_top else "N/A"
+    icp_won = icp_kpi[11]["total"] if 11 in icp_kpi else 0
+    icp_weeks_count = len(icp_weeks)
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>KeychainOS · Pipeline Intelligence</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<title>KeychainOS — Sales Funnel Review</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
-*{{margin:0;padding:0;box-sizing:border-box;}}
-:root{{
-  --bg:#F7F7F5;--white:#FFFFFF;--border:#E8E8E4;
-  --accent:#F5D000;--text:#0A0A0A;--secondary:#6B6B6B;
-  --red:#E03030;--green:#1A9E5F;--radius:10px;
-}}
-body{{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-height:100vh;-webkit-font-smoothing:antialiased;}}
+  :root {{
+    --bg: #F7F7F5;
+    --surface: #FFFFFF;
+    --border: #E8E8E4;
+    --text: #0A0A0A;
+    --muted: #6B6B6B;
+    --accent: #F5D000;
+    --red: #E03030;
+    --red-bg: #FFF8F8;
+    --green: #1A9E5F;
+    --green-bg: #F5FFF9;
+  }}
+  * {{ margin:0; padding:0; box-sizing:border-box; }}
+  html {{ scroll-behavior:smooth; }}
+  body {{ background:var(--bg); color:var(--text); font-family:'Inter',sans-serif; line-height:1.6; }}
 
-/* GATE */
-#gate{{position:fixed;inset:0;background:var(--bg);z-index:9999;display:flex;align-items:center;justify-content:center;}}
-.gate-inner{{text-align:center;max-width:380px;width:100%;padding:2rem;}}
-.gate-brand{{font-size:22px;font-weight:800;letter-spacing:-0.5px;color:var(--text);margin-bottom:4px;}}
-.gate-brand span{{color:var(--accent);background:var(--text);padding:0 6px;border-radius:4px;}}
-.gate-sub{{font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:var(--secondary);margin-bottom:28px;}}
-.gate-prompt{{font-size:12px;color:var(--secondary);margin-bottom:16px;}}
-.gate-boxes{{display:flex;gap:6px;justify-content:center;margin-bottom:12px;flex-wrap:wrap;}}
-.dbox{{width:34px;height:42px;border:1px solid var(--border);border-radius:6px;text-align:center;font-size:16px;font-family:'Inter',sans-serif;font-weight:700;color:var(--text);background:var(--white);outline:none;transition:border-color 0.15s;}}
-.dbox:focus{{border-color:var(--accent);box-shadow:0 0 0 3px rgba(245,208,0,0.2);}}
-.dbox.err{{border-color:var(--red);animation:shake 0.3s ease;}}
-@keyframes shake{{0%,100%{{transform:translateX(0);}}25%{{transform:translateX(-4px);}}75%{{transform:translateX(4px);}}}}
-#gate-error{{font-size:11px;color:var(--red);height:16px;}}
+  nav {{
+    position:sticky; top:0; z-index:100;
+    background:rgba(247,247,245,0.95);
+    backdrop-filter:blur(8px);
+    border-bottom:1px solid var(--border);
+    padding:0 3rem;
+    display:flex; align-items:center; justify-content:space-between;
+    height:52px;
+  }}
+  .nav-brand {{ font-size:0.88rem; font-weight:700; letter-spacing:-0.3px; color:var(--text); }}
+  .nav-brand span {{ color:var(--muted); font-weight:400; }}
+  .nav-links {{ display:flex; gap:2rem; list-style:none; }}
+  .nav-links a {{
+    font-size:0.65rem; font-weight:700; letter-spacing:0.08em;
+    text-transform:uppercase; color:var(--muted);
+    text-decoration:none; transition:color 0.15s;
+  }}
+  .nav-links a:hover {{ color:var(--text); }}
+  .nav-date {{ font-size:0.65rem; font-weight:600; letter-spacing:0.06em; text-transform:uppercase; color:var(--muted); }}
 
-/* NAV */
-nav{{position:fixed;top:0;left:0;right:0;z-index:100;background:var(--white);border-bottom:1px solid var(--border);padding:0 40px;height:52px;display:flex;align-items:center;gap:2px;}}
-.nav-brand{{font-size:11px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;color:var(--text);margin-right:20px;}}
-.nav-btn{{background:none;border:none;font-family:'Inter',sans-serif;font-size:11px;font-weight:500;letter-spacing:0.8px;text-transform:uppercase;color:var(--secondary);padding:6px 12px;border-radius:6px;cursor:pointer;transition:all 0.15s;}}
-.nav-btn:hover{{background:var(--bg);color:var(--text);}}
-.nav-btn.active{{background:var(--accent);color:var(--text);font-weight:700;}}
+  .hero {{
+    padding:4rem 3rem 3.5rem;
+    border-bottom:1px solid var(--border);
+    display:grid; grid-template-columns:1fr 1fr;
+    gap:4rem; align-items:end;
+  }}
+  .hero-eyebrow {{
+    font-size:0.65rem; font-weight:700; letter-spacing:0.1em;
+    text-transform:uppercase; color:var(--muted); margin-bottom:1rem;
+  }}
+  .hero h1 {{
+    font-size:3rem; font-weight:700; line-height:1.05;
+    letter-spacing:-0.8px; color:var(--text);
+  }}
+  .hero h1 em {{ font-style:normal; color:var(--muted); font-weight:300; }}
+  .hero-desc {{ font-size:0.88rem; color:var(--muted); margin-top:1.25rem; max-width:400px; line-height:1.7; }}
+  .hero-meta {{ display:flex; flex-direction:column; gap:0; border:1px solid var(--border); border-radius:10px; overflow:hidden; background:var(--surface); }}
+  .meta-item {{
+    padding:1rem 1.25rem;
+    border-bottom:1px solid var(--border);
+    display:flex; justify-content:space-between; align-items:center;
+  }}
+  .meta-item:last-child {{ border-bottom:none; }}
+  .meta-label {{ font-size:0.65rem; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:var(--muted); }}
+  .meta-value {{ font-size:0.95rem; font-weight:700; letter-spacing:-0.3px; color:var(--text); }}
+  .meta-value.accent {{ color:var(--text); background:var(--accent); padding:2px 8px; border-radius:3px; }}
 
-/* CONTROLS BAR */
-.cbar{{position:fixed;top:52px;left:0;right:0;z-index:99;background:var(--text);border-bottom:1px solid #222;padding:0 40px;height:60px;display:flex;align-items:center;gap:28px;}}
-.cg{{display:flex;align-items:center;gap:10px;}}
-.cl{{font-size:10px;font-weight:700;letter-spacing:0.9px;text-transform:uppercase;color:rgba(255,255,255,0.4);white-space:nowrap;}}
-.cv{{font-size:14px;font-weight:800;letter-spacing:-0.3px;color:var(--accent);min-width:52px;text-align:right;}}
-.csep{{width:1px;height:28px;background:#333;}}
-.cbadge{{font-size:10px;font-weight:600;letter-spacing:0.7px;text-transform:uppercase;color:rgba(255,255,255,0.25);}}
-input[type=range]{{-webkit-appearance:none;appearance:none;width:120px;height:3px;background:#333;border-radius:2px;outline:none;cursor:pointer;}}
-input[type=range]::-webkit-slider-thumb{{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--accent);cursor:pointer;border:2px solid var(--text);box-shadow:0 0 0 2px var(--accent);}}
-input[type=range]::-moz-range-thumb{{width:14px;height:14px;border-radius:50%;background:var(--accent);cursor:pointer;border:2px solid var(--text);}}
+  section {{ padding:4rem 3rem; border-bottom:1px solid var(--border); }}
+  .section-header {{ display:flex; align-items:baseline; gap:1rem; margin-bottom:2.5rem; }}
+  .section-num {{ font-size:0.65rem; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:var(--muted); min-width:2rem; }}
+  .section-title {{ font-size:1.4rem; font-weight:700; letter-spacing:-0.6px; color:var(--text); }}
+  .section-subtitle {{ font-size:0.78rem; color:var(--muted); margin-left:auto; max-width:340px; text-align:right; line-height:1.5; }}
 
-/* PAGES */
-.page{{display:none;padding:132px 40px 60px;animation:fadeIn 0.2s ease;}}
-.page.active{{display:block;}}
-@keyframes fadeIn{{from{{opacity:0;transform:translateY(4px);}}to{{opacity:1;transform:translateY(0);}}}}
+  .kpi-grid {{
+    display:grid; grid-template-columns:repeat(4,1fr);
+    gap:1px; background:var(--border);
+    border:1px solid var(--border); border-radius:10px;
+    overflow:hidden; margin-bottom:1.5rem;
+  }}
+  .kpi-card {{ background:var(--surface); padding:1.5rem; }}
+  .kpi-label {{ font-size:0.62rem; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:var(--muted); margin-bottom:0.5rem; }}
+  .kpi-value {{ font-size:2.2rem; font-weight:700; letter-spacing:-0.8px; color:var(--text); line-height:1; }}
+  .kpi-sub {{ font-size:0.72rem; color:var(--muted); margin-top:0.35rem; }}
+  .kpi-badge {{
+    display:inline-flex; font-size:0.62rem; font-weight:700;
+    letter-spacing:0.06em; text-transform:uppercase;
+    padding:2px 7px; border-radius:3px;
+    width:fit-content; margin-top:0.5rem;
+  }}
+  .kpi-badge.green {{ background:var(--green-bg); color:var(--green); border:1px solid var(--green); }}
+  .kpi-badge.amber {{ background:#FFFBEB; color:#92400E; border:1px solid #D97706; }}
+  .kpi-badge.featured {{ background:var(--accent); color:var(--text); }}
 
-/* TYPE */
-.plabel{{font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:var(--secondary);margin-bottom:6px;}}
-h2{{font-size:26px;font-weight:800;letter-spacing:-0.6px;color:var(--text);line-height:1.1;}}
-.sub{{font-size:12px;color:var(--secondary);margin-top:5px;}}
+  .pipeline-table {{ width:100%; border-collapse:collapse; font-size:0.82rem; }}
+  .pipeline-table th {{
+    font-size:0.62rem; font-weight:700; letter-spacing:0.08em;
+    text-transform:uppercase; color:var(--muted);
+    text-align:left; padding:0.6rem 1rem;
+    border-bottom:2px solid var(--border);
+    background:var(--bg);
+  }}
+  .pipeline-table td {{ padding:0.85rem 1rem; border-bottom:1px solid var(--border); vertical-align:middle; }}
+  .pipeline-table tr:last-child td {{ border-bottom:none; }}
+  .pipeline-table tr:hover td {{ background:var(--bg); }}
+  .stage-dot {{ display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:0.5rem; }}
+  .stage-name {{ display:flex; align-items:center; font-weight:600; color:var(--text); font-size:0.8rem; }}
+  .conv-bar-wrap {{ display:flex; align-items:center; gap:0.75rem; }}
+  .conv-bar-bg {{ flex:1; height:4px; background:var(--border); border-radius:2px; overflow:hidden; }}
+  .conv-bar-fill {{ height:100%; border-radius:2px; }}
+  .conv-pct {{ font-size:0.75rem; font-weight:700; min-width:38px; text-align:right; }}
+  .total-num {{ font-weight:700; font-size:0.9rem; color:var(--text); }}
+  .peak-week {{ font-size:0.72rem; color:var(--muted); font-weight:500; }}
+  .hide-row-btn {{
+    background:none; border:1px solid var(--border); border-radius:4px;
+    font-size:0.62rem; font-weight:700; color:var(--muted);
+    padding:0.2rem 0.45rem; cursor:pointer;
+    font-family:'Inter',sans-serif; letter-spacing:0.06em;
+    text-transform:uppercase; transition:all 0.15s;
+  }}
+  .hide-row-btn:hover {{ border-color:var(--red); color:var(--red); }}
+  .conv-row-hidden {{ display:none; }}
+  .show-hidden-btn {{
+    font-family:'Inter',sans-serif; font-size:0.65rem; font-weight:700;
+    letter-spacing:0.08em; text-transform:uppercase; color:var(--muted);
+    background:none; border:1px solid var(--border); border-radius:4px;
+    padding:0.35rem 0.85rem; cursor:pointer; margin-top:0.75rem;
+    transition:all 0.15s;
+  }}
+  .show-hidden-btn:hover {{ color:var(--text); border-color:var(--text); }}
 
-/* CARDS & GRIDS */
-.card{{background:var(--white);border:1px solid var(--border);border-radius:var(--radius);padding:24px;}}
-.g2{{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;}}
-.g3{{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;}}
-.g4{{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;}}
-.divider{{height:1px;background:var(--border);margin:24px 0;}}
+  .chart-controls {{ display:flex; align-items:center; justify-content:space-between; margin-bottom:1.25rem; flex-wrap:wrap; gap:1rem; }}
+  .chart-actions {{ display:flex; gap:0.5rem; }}
+  .btn {{
+    font-family:'Inter',sans-serif; font-size:0.62rem; font-weight:700;
+    letter-spacing:0.08em; text-transform:uppercase;
+    padding:0.35rem 0.85rem; border:1px solid var(--border);
+    border-radius:4px; cursor:pointer; background:var(--surface);
+    color:var(--muted); transition:all 0.15s;
+  }}
+  .btn:hover {{ background:var(--text); color:var(--accent); border-color:var(--text); }}
+  .chart-layout {{ display:grid; grid-template-columns:1fr 200px; gap:1.5rem; align-items:start; }}
+  .chart-box {{ background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:1.5rem; height:420px; }}
+  .legend-panel {{ display:flex; flex-direction:column; gap:0; border:1px solid var(--border); border-radius:10px; overflow:hidden; background:var(--surface); }}
+  .leg-item {{
+    display:flex; align-items:center; gap:0.6rem;
+    padding:0.5rem 0.75rem; cursor:pointer; transition:all 0.15s;
+    border-bottom:1px solid var(--border); user-select:none;
+  }}
+  .leg-item:last-child {{ border-bottom:none; }}
+  .leg-item:hover {{ background:var(--bg); }}
+  .leg-item.off {{ opacity:0.3; }}
+  .leg-swatch {{ width:16px; height:3px; border-radius:1px; flex-shrink:0; }}
+  .leg-label {{ font-size:0.62rem; font-weight:600; flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--text); }}
+  .leg-total {{ font-size:0.62rem; font-weight:700; color:var(--muted); }}
 
-/* METRIC ROWS */
-.mrow{{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--border);}}
-.mrow:last-child{{border-bottom:none;}}
-.mrl{{font-size:12px;color:var(--secondary);}}
-.mrv{{font-size:20px;font-weight:800;letter-spacing:-0.4px;}}
+  .trend-grid {{ display:grid; grid-template-columns:repeat(3,1fr); gap:1px; background:var(--border); border:1px solid var(--border); border-radius:10px; overflow:hidden; margin-bottom:1px; }}
+  .two-col {{ display:grid; grid-template-columns:1fr 1fr; gap:1px; background:var(--border); border:1px solid var(--border); border-radius:10px; overflow:hidden; margin-bottom:1.5rem; }}
+  .trend-card {{ background:var(--surface); padding:1.5rem; }}
+  .trend-card-header {{ display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:1rem; }}
+  .trend-icon {{
+    width:32px; height:32px; border-radius:4px;
+    display:flex; align-items:center; justify-content:center; font-size:0.9rem;
+    flex-shrink:0;
+  }}
+  .trend-icon.yellow {{ background:var(--accent); }}
+  .trend-icon.green {{ background:var(--green-bg); border:1px solid var(--green); }}
+  .trend-icon.amber {{ background:#FFFBEB; border:1px solid #D97706; }}
+  .trend-tag {{
+    font-size:0.6rem; font-weight:700; letter-spacing:0.1em;
+    text-transform:uppercase; padding:2px 7px; border-radius:3px;
+  }}
+  .trend-tag.positive {{ background:var(--green-bg); color:var(--green); border:1px solid var(--green); }}
+  .trend-tag.watch {{ background:#FFFBEB; color:#92400E; border:1px solid #D97706; }}
+  .trend-tag.insight {{ background:var(--accent); color:var(--text); }}
+  .trend-card h3 {{ font-size:0.88rem; font-weight:700; letter-spacing:-0.3px; margin-bottom:0.5rem; color:var(--text); }}
+  .trend-card p {{ font-size:0.75rem; color:var(--muted); line-height:1.65; }}
+  .trend-card strong {{ color:var(--text); font-weight:700; }}
+  .corr-box {{ background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:1.5rem; height:280px; margin-top:1.5rem; }}
 
-/* STAT TILES */
-.stat{{background:var(--white);border:1px solid var(--border);border-radius:var(--radius);padding:20px 22px;}}
-.slabel{{font-size:11px;font-weight:600;letter-spacing:0.9px;text-transform:uppercase;color:var(--secondary);margin-bottom:6px;}}
-.sval{{font-size:28px;font-weight:800;letter-spacing:-0.6px;color:var(--text);line-height:1;}}
-.sval.green{{color:var(--green);}} .sval.red{{color:var(--red);}}
-.snote{{font-size:11px;color:var(--secondary);margin-top:4px;}}
+  .alert-block {{
+    display:flex; gap:0.75rem; padding:1rem 1.25rem;
+    background:#0A0A0A; border-radius:10px;
+    margin-top:1.5rem; font-size:0.78rem; line-height:1.6;
+    color:rgba(255,255,255,0.6);
+  }}
+  .alert-icon {{
+    width:28px; height:28px; background:var(--accent); border-radius:4px;
+    display:flex; align-items:center; justify-content:center;
+    font-size:0.8rem; flex-shrink:0; margin-top:0.1rem;
+  }}
+  .alert-block strong {{ color:#FFFFFF; font-weight:700; }}
 
-/* TOTAL BLOCK */
-.tblock{{background:var(--text);border-radius:8px;padding:13px 16px;margin-top:14px;display:flex;justify-content:space-between;align-items:center;}}
-.tblabel{{font-size:11px;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;color:rgba(255,255,255,0.35);}}
-.tbval{{font-size:24px;font-weight:800;letter-spacing:-0.5px;color:var(--accent);}}
+  /* ── DATASET TOGGLE (ICP) ── */
+  .ds-toggle-bar {{
+    display:flex; align-items:center; gap:0;
+    border:1px solid var(--border); border-radius:8px;
+    overflow:hidden; background:var(--surface);
+    margin-bottom:1.5rem;
+  }}
+  .ds-tab {{
+    flex:1; padding:0.75rem 1.25rem;
+    display:flex; align-items:center; justify-content:space-between;
+    cursor:pointer; transition:background 0.15s; user-select:none;
+    border-right:1px solid var(--border);
+  }}
+  .ds-tab:last-child {{ border-right:none; }}
+  .ds-tab:hover {{ background:var(--bg); }}
+  .ds-tab.ds-active {{ background:var(--accent); }}
+  .ds-tab.ds-active .ds-tab-label {{ color:var(--text); }}
+  .ds-tab.ds-active .ds-tab-meta {{ color:rgba(10,10,10,0.55); }}
+  .ds-tab-label {{
+    font-size:0.78rem; font-weight:700; letter-spacing:-0.2px;
+    color:var(--text);
+  }}
+  .ds-tab-meta {{
+    font-size:0.62rem; font-weight:600; letter-spacing:0.06em;
+    text-transform:uppercase; color:var(--muted);
+    text-align:right;
+  }}
+  .ds-tab-sub {{
+    font-size:0.62rem; color:var(--muted); margin-top:1px;
+  }}
+  .ds-tab.ds-active .ds-tab-sub {{ color:rgba(10,10,10,0.5); }}
 
-/* ALERT */
-.ablock{{background:var(--text);border-radius:var(--radius);padding:16px 18px;display:flex;align-items:flex-start;gap:12px;margin-top:14px;}}
-.aicon{{background:var(--accent);border-radius:6px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:13px;}}
-.atext{{font-size:12px;color:rgba(255,255,255,0.7);line-height:1.6;}}
-.atext strong{{color:white;font-weight:600;}}
+  /* ── COHORT FILTERS ── */
+  .cf-grid {{
+    display:grid; grid-template-columns:1fr 1fr;
+    gap:1px; background:var(--border);
+    border:1px solid var(--border); border-radius:10px;
+    overflow:hidden; margin-bottom:1.5rem;
+  }}
+  .cf-row {{
+    display:flex; align-items:center; gap:0.85rem;
+    padding:0.85rem 1.25rem;
+    border-bottom:1px solid var(--border);
+    cursor:pointer; transition:background 0.12s;
+    user-select:none; background:var(--surface);
+  }}
+  .cf-row:last-child {{ border-bottom:none; }}
+  .cf-row:nth-child(3) {{ border-bottom:none; }}
+  .cf-row:hover {{ background:var(--bg); }}
+  .cf-row.cf-active {{ background:var(--red-bg); }}
+  .cf-toggle {{
+    width:34px; height:19px; border-radius:10px;
+    background:var(--border); position:relative;
+    transition:background 0.2s; flex-shrink:0;
+    border:1px solid var(--border);
+  }}
+  .cf-toggle::after {{
+    content:''; position:absolute;
+    width:13px; height:13px; border-radius:50%;
+    background:#fff; top:2px; left:2px;
+    transition:transform 0.2s;
+    box-shadow:0 1px 2px rgba(0,0,0,0.2);
+  }}
+  .cf-row.cf-active .cf-toggle {{ background:var(--red); border-color:var(--red); }}
+  .cf-row.cf-active .cf-toggle::after {{ transform:translateX(15px); }}
+  .cf-info {{ flex:1; min-width:0; }}
+  .cf-name {{ font-size:0.78rem; font-weight:700; color:var(--text); letter-spacing:-0.2px; }}
+  .cf-row.cf-active .cf-name {{ color:var(--red); }}
+  .cf-desc {{ font-size:0.65rem; color:var(--muted); margin-top:1px; line-height:1.4; }}
+  .cf-tag {{
+    font-size:0.58rem; font-weight:700; letter-spacing:0.07em; text-transform:uppercase;
+    padding:2px 6px; border-radius:3px; white-space:nowrap; flex-shrink:0;
+  }}
+  .cf-tag-week {{ background:var(--bg); color:var(--muted); border:1px solid var(--border); }}
+  .cf-tag-stage {{ background:#EEF2FF; color:#3730a3; border:1px solid #C7D2FE; }}
+  .cf-bar {{
+    border-top:1px solid var(--border);
+    background:#0A0A0A; padding:0.85rem 1.5rem;
+    display:flex; align-items:center; gap:2rem;
+    border-radius:0 0 10px 10px;
+  }}
+  .cf-bar-label {{ font-size:0.6rem; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.35); white-space:nowrap; }}
+  .cf-metrics {{ display:flex; gap:2rem; flex:1; }}
+  .cf-metric-val {{ font-size:1rem; font-weight:700; letter-spacing:-0.3px; color:#fff; }}
+  .cf-metric-val.y {{ color:var(--accent); }}
+  .cf-metric-val.r {{ color:var(--red); }}
+  .cf-metric-lbl {{ font-size:0.58rem; font-weight:600; letter-spacing:0.08em; text-transform:uppercase; color:rgba(255,255,255,0.35); margin-top:1px; }}
+  .cf-apply {{
+    font-size:0.65rem; font-weight:700; letter-spacing:0.1em; text-transform:uppercase;
+    padding:7px 16px; border-radius:4px;
+    background:var(--accent); color:#0A0A0A;
+    border:none; cursor:pointer; font-family:'Inter',sans-serif;
+    transition:opacity 0.15s; white-space:nowrap;
+  }}
+  .cf-apply:hover {{ opacity:0.85; }}
+  .cf-apply:disabled {{ background:var(--border); color:var(--muted); cursor:default; opacity:1; }}
+  .cf-chips {{
+    display:flex; gap:0.4rem; flex-wrap:wrap; align-items:center;
+    padding:0.7rem 1.25rem; border-top:1px solid var(--border);
+    background:var(--bg); min-height:40px;
+  }}
+  .cf-chips-lbl {{ font-size:0.6rem; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:var(--muted); flex-shrink:0; }}
+  .cf-chip {{
+    display:inline-flex; align-items:center; gap:4px;
+    font-size:0.62rem; font-weight:600;
+    padding:2px 7px; border-radius:3px;
+    background:var(--red-bg); color:var(--red); border:1px solid #FCCACA;
+  }}
+  .cf-chip-x {{
+    width:11px; height:11px; border-radius:50%;
+    background:var(--red); color:#fff;
+    display:inline-flex; align-items:center; justify-content:center;
+    font-size:0.5rem; cursor:pointer; font-weight:700; line-height:1;
+  }}
+  .cf-none {{ font-size:0.65rem; color:var(--muted); font-style:italic; }}
 
-/* BADGE */
-.by{{background:var(--text) !important;color:var(--accent) !important;padding:2px 10px;border-radius:5px;font-weight:800;letter-spacing:-0.4px;display:inline-block;}}
+  /* ── CLOSE RATE BASE TOGGLE ── */
+  .cr-toggle-bar {{
+    display:flex; align-items:stretch;
+    border:1px solid var(--border); border-radius:8px;
+    overflow:hidden; background:var(--surface);
+    margin-bottom:1rem;
+  }}
+  .cr-tab {{
+    flex:1; padding:0.65rem 1.25rem;
+    display:flex; align-items:center; justify-content:space-between;
+    cursor:pointer; transition:background 0.15s; user-select:none;
+    border-right:1px solid var(--border);
+  }}
+  .cr-tab:last-child {{ border-right:none; }}
+  .cr-tab:hover {{ background:var(--bg); }}
+  .cr-tab.cr-active {{ background:#0A0A0A; }}
+  .cr-tab.cr-active .cr-tab-label {{ color:#FFFFFF; }}
+  .cr-tab.cr-active .cr-tab-sub {{ color:rgba(255,255,255,0.4); }}
+  .cr-tab.cr-active .cr-tab-meta {{ color:var(--accent); }}
+  .cr-tab-label {{
+    font-size:0.78rem; font-weight:700; letter-spacing:-0.2px; color:var(--text);
+  }}
+  .cr-tab-sub {{ font-size:0.62rem; color:var(--muted); margin-top:1px; }}
+  .cr-tab-meta {{
+    font-size:0.65rem; font-weight:700; letter-spacing:0.04em;
+    color:var(--muted); white-space:nowrap; margin-left:1.5rem; flex-shrink:0;
+  }}
 
-/* TAGS */
-.tag{{display:inline-block;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;padding:3px 8px;border-radius:4px;margin-top:8px;}}
-.tr{{background:#FFF0F0;color:var(--red);}} .tg{{background:#F0FBF6;color:var(--green);}} .tb{{background:var(--text);color:var(--accent);}}
+  /* ICP banner shown when ICP mode is active */
+  .icp-banner {{
+    display:none; align-items:center; gap:0.75rem;
+    padding:0.65rem 1.25rem;
+    background:var(--accent); border-radius:8px;
+    margin-bottom:1.5rem;
+    font-size:0.72rem; font-weight:600; color:#0A0A0A;
+    font-family:'Inter',sans-serif;
+  }}
+  .icp-banner.visible {{ display:flex; }}
+  .icp-banner-dot {{
+    width:8px; height:8px; border-radius:50%;
+    background:#0A0A0A; flex-shrink:0;
+  }}
 
-/* FOOTER */
-footer{{margin-top:40px;padding-top:16px;border-top:1px solid var(--border);display:flex;justify-content:space-between;}}
-.fmeta{{font-size:11px;color:var(--secondary);}}
-.fconf{{font-size:11px;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;color:var(--secondary);}}
+  footer {{
+    padding:1.5rem 3rem;
+    display:flex; align-items:center; justify-content:space-between;
+    border-top:1px solid var(--border);
+  }}
+  .footer-left {{ font-size:0.65rem; font-weight:600; letter-spacing:0.06em; text-transform:uppercase; color:var(--muted); }}
+  .footer-right {{ font-size:0.65rem; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:var(--muted); }}
 
-/* TABLE */
-table{{width:100%;border-collapse:collapse;}}
-th{{font-size:11px;font-weight:600;letter-spacing:0.9px;text-transform:uppercase;color:var(--secondary);text-align:left;padding:8px 14px;border-bottom:1px solid var(--border);}}
-td{{font-size:13px;padding:10px 14px;border-bottom:1px solid var(--border);color:var(--text);}}
-tr:last-child td{{border-bottom:none;}} tr:hover td{{background:var(--bg);}}
+  .dbox {{
+    width:36px; height:44px;
+    border:1px solid var(--border); border-radius:6px;
+    text-align:center; font-size:1.1rem;
+    font-family:'Inter',sans-serif; font-weight:700;
+    color:var(--text); background:var(--surface);
+    outline:none; transition:border-color 0.15s;
+  }}
+  .dbox:focus {{ border-color:var(--text); box-shadow:0 0 0 3px rgba(245,208,0,0.25); }}
+  .dbox.err {{ border-color:var(--red); animation:shake 0.3s ease; }}
+  @keyframes shake {{ 0%,100%{{transform:translateX(0);}} 25%{{transform:translateX(-4px);}} 75%{{transform:translateX(4px);}} }}
 
-/* PIPE FLOW */
-.prow{{display:flex;align-items:stretch;margin-top:24px;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;}}
-.ptile{{flex:1;background:var(--white);border-right:1px solid var(--border);padding:22px 18px;position:relative;}}
-.ptile:last-child{{border-right:none;}}
-.ptile.feat{{background:var(--accent);}}
-.ptile.feat .psl{{color:rgba(0,0,0,0.45);}} .ptile.feat .psn{{color:var(--text);}} .ptile.feat .psd{{color:rgba(0,0,0,0.55);}} .ptile.feat .parr{{background:var(--text);color:var(--accent);}}
-.parr{{position:absolute;right:-11px;top:50%;transform:translateY(-50%);z-index:3;width:22px;height:22px;background:var(--border);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--secondary);font-weight:700;}}
-.ptile:last-child .parr{{display:none;}}
-.psl{{font-size:11px;font-weight:600;letter-spacing:0.9px;text-transform:uppercase;color:var(--secondary);margin-bottom:6px;}}
-.psn{{font-size:30px;font-weight:800;letter-spacing:-0.7px;color:var(--text);line-height:1;margin-bottom:6px;}}
-.psd{{font-size:11px;color:var(--secondary);line-height:1.5;}}
-
-/* FUNNEL */
-.frow{{margin-bottom:3px;}}
-.ftrack{{position:relative;height:46px;background:var(--white);border:1px solid var(--border);border-radius:6px;overflow:hidden;display:flex;align-items:center;padding:0 16px;}}
-.ffill{{position:absolute;left:0;top:0;bottom:0;max-width:98%;background:var(--accent);opacity:0.18;border-radius:6px 0 0 6px;}}
-.ffill.fg{{background:var(--green);opacity:0.14;}}
-.fbl{{font-size:12px;font-weight:500;color:var(--secondary);z-index:1;position:relative;}}
-.fbv{{font-size:20px;font-weight:800;letter-spacing:-0.4px;color:var(--text);margin-left:auto;z-index:10;position:relative;}}
-.fbv.fg{{color:var(--green);}}
-.fdrop{{font-size:11px;color:var(--secondary);padding:3px 16px 7px;display:flex;align-items:center;gap:5px;}}
-.fdrop::before{{content:'↓';color:var(--red);font-size:10px;}}
-.fdrop.fc::before{{content:'→';color:var(--green);}}
-
-/* SLIPPAGE */
-.sgrid{{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:24px;}}
-.sc{{background:var(--white);border:1px solid var(--border);border-radius:var(--radius);padding:22px;}}
-.smo{{font-size:11px;font-weight:700;letter-spacing:0.9px;text-transform:uppercase;color:var(--secondary);padding-bottom:12px;border-bottom:1px solid var(--border);margin-bottom:12px;}}
-.srow{{display:flex;justify-content:space-between;align-items:baseline;padding:7px 0;border-bottom:1px solid var(--border);}}
-.srow:last-of-type{{border-bottom:none;}}
-.srl{{font-size:12px;color:var(--secondary);}}
-.srv{{font-size:20px;font-weight:800;letter-spacing:-0.4px;color:var(--text);}}
-.srv.green{{color:var(--green);}} .srv.red{{color:var(--red);}}
-.stag{{display:inline-block;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;padding:3px 7px;border-radius:4px;margin-top:4px;margin-right:4px;}}
-.stc{{background:#F0FBF6;color:var(--green);}} .stl{{background:#FFF0F0;color:var(--red);}} .sts{{background:var(--bg);border:1px solid var(--border);color:var(--secondary);}}
-.lnote{{margin-top:12px;background:var(--accent);border-radius:6px;padding:8px 12px;font-size:11px;font-weight:700;color:var(--text);text-align:center;text-transform:uppercase;letter-spacing:0.4px;}}
-
-/* SCENARIOS */
-.scgrid{{display:grid;grid-template-columns:repeat(3,1fr);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-top:24px;}}
-.sctile{{padding:28px 24px;border-right:1px solid var(--border);}}
-.sctile:last-child{{border-right:none;}}
-.sctile.under{{background:#FFF8F8;}} .sctile.base{{background:var(--white);}} .sctile.over{{background:#F5FFF9;}}
-.schead{{font-size:11px;font-weight:700;letter-spacing:0.9px;text-transform:uppercase;margin-bottom:6px;}}
-.sctile.under .schead{{color:var(--red);}} .sctile.base .schead{{color:var(--secondary);}} .sctile.over .schead{{color:var(--green);}}
-.scdesc{{font-size:11px;color:var(--secondary);line-height:1.7;margin-bottom:16px;border-bottom:1px solid var(--border);padding-bottom:14px;}}
-.scmr{{display:flex;justify-content:space-between;align-items:baseline;padding:6px 0;border-bottom:1px solid var(--border);}}
-.scmr:last-of-type{{border-bottom:none;margin-bottom:16px;}}
-.scml{{font-size:12px;color:var(--secondary);}}
-.scmv{{font-size:19px;font-weight:800;letter-spacing:-0.4px;}}
-.sctile.under .scmv{{color:var(--red);}} .sctile.base .scmv{{color:var(--text);}} .sctile.over .scmv{{color:var(--green);}}
-.sccond{{margin-top:14px;font-size:11px;color:var(--secondary);line-height:1.8;}}
-.sccond span{{display:block;}}
-.changed{{animation:pulse 0.35s ease;}}
-@keyframes pulse{{0%,100%{{opacity:1;}}50%{{opacity:0.35;}}}}
+  @media(max-width:900px) {{
+    nav {{ padding:0 1.5rem; }}
+    .hero, section {{ padding:3rem 1.5rem; }}
+    .hero {{ grid-template-columns:1fr; }}
+    .kpi-grid {{ grid-template-columns:repeat(2,1fr); }}
+    .chart-layout {{ grid-template-columns:1fr; }}
+    .trend-grid, .two-col {{ grid-template-columns:1fr; }}
+    footer {{ padding:1.5rem; flex-direction:column; gap:0.5rem; }}
+    .ds-toggle-bar {{ flex-direction:column; }}
+    .ds-tab {{ border-right:none; border-bottom:1px solid var(--border); }}
+  }}
 </style>
 </head>
 <body>
 
-<!-- ═══ ACCESS GATE ═══ -->
-<div id="gate">
-  <div class="gate-inner">
-    <div class="gate-brand">Keychain<span>OS</span></div>
-    <div class="gate-sub">Pipeline Intelligence</div>
-    <div class="gate-prompt">Enter access code to continue</div>
-    <div class="gate-boxes" id="gboxes">
-      {"".join(['<input type="password" maxlength="1" class="dbox" inputmode="text" autocomplete="off">' for _ in range(CODE_LENGTH)])}
+<!-- ── ACCESS GATE ── -->
+<div id="gate" style="position:fixed;inset:0;background:var(--bg);z-index:9999;display:flex;align-items:center;justify-content:center;">
+  <div style="text-align:center;max-width:400px;width:100%;padding:2rem;">
+    <div style="font-size:1.4rem;font-weight:700;letter-spacing:-0.5px;margin-bottom:0.25rem;font-family:'Inter',sans-serif;color:#0A0A0A;">Keychain<span style="font-weight:300;color:#6B6B6B;">OS</span></div>
+    <div style="font-size:0.62rem;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#6B6B6B;margin-bottom:2rem;font-family:'Inter',sans-serif;">Sales Funnel Review</div>
+    <div style="font-size:0.78rem;color:#6B6B6B;margin-bottom:1.25rem;font-family:'Inter',sans-serif;">Enter access code to continue</div>
+    <div style="display:flex;gap:0.4rem;justify-content:center;margin-bottom:1rem;flex-wrap:wrap;" id="digits">
+      <input type="password" maxlength="1" class="dbox" inputmode="text" autocomplete="off">
+      <input type="password" maxlength="1" class="dbox" inputmode="text" autocomplete="off">
+      <input type="password" maxlength="1" class="dbox" inputmode="text" autocomplete="off">
+      <input type="password" maxlength="1" class="dbox" inputmode="text" autocomplete="off">
+      <input type="password" maxlength="1" class="dbox" inputmode="text" autocomplete="off">
+      <input type="password" maxlength="1" class="dbox" inputmode="text" autocomplete="off">
+      <input type="password" maxlength="1" class="dbox" inputmode="text" autocomplete="off">
+      <input type="password" maxlength="1" class="dbox" inputmode="text" autocomplete="off">
+      <input type="password" maxlength="1" class="dbox" inputmode="text" autocomplete="off">
+      <input type="password" maxlength="1" class="dbox" inputmode="text" autocomplete="off">
+      <input type="password" maxlength="1" class="dbox" inputmode="text" autocomplete="off">
+      <input type="password" maxlength="1" class="dbox" inputmode="text" autocomplete="off">
     </div>
-    <div id="gate-error"></div>
+    <div id="gate-error" style="font-size:0.72rem;color:var(--red);height:1rem;margin-bottom:0.5rem;font-family:'Inter',sans-serif;"></div>
   </div>
 </div>
 
@@ -238,7 +762,7 @@ tr:last-child td{{border-bottom:none;}} tr:hover td{{background:var(--bg);}}
 (function(){{
   const HASH="{CODE_HASH}";
   const LEN={CODE_LENGTH};
-  const SK="kcos_pi_v1";
+  const SK="kcos_v2";
   if(sessionStorage.getItem(SK)==="1"){{document.getElementById('gate').style.display='none';return;}}
   const boxes=document.querySelectorAll('.dbox');
   boxes[0].focus();
@@ -280,556 +804,731 @@ tr:last-child td{{border-bottom:none;}} tr:hover td{{background:var(--bg);}}
 }})();
 </script>
 
-
-<!-- ═══ NAV ═══ -->
+<!-- ── NAV ── -->
 <nav>
-  <span class="nav-brand">Pipeline Intel</span>
-  <button class="nav-btn active" onclick="show(0)">01 · Flow</button>
-  <button class="nav-btn" onclick="show(1)">02 · Metrics</button>
-  <button class="nav-btn" onclick="show(2)">03 · Funnel</button>
-  <button class="nav-btn" onclick="show(3)">04 · Slippage</button>
-  <button class="nav-btn" onclick="show(4)">05 · Revenue</button>
+  <div class="nav-brand">Keychain<span>OS</span></div>
+  <ul class="nav-links">
+    <li><a href="#filters">Filters</a></li>
+    <li><a href="#kpis">KPIs</a></li>
+    <li><a href="#chart">Trend</a></li>
+    <li><a href="#conversion">Conversion</a></li>
+    <li><a href="#insights">Insights</a></li>
+    <li><a href="#motion">Motion</a></li>
+  </ul>
+  <div class="nav-date">Updated {generated_at}</div>
 </nav>
 
-<!-- ═══ CONTROLS BAR ═══ -->
-<div class="cbar">
-  <div class="cg">
-    <span class="cl">Close Rate</span>
-    <input type="range" id="sl-cr" min="8" max="25" step="0.5" value="{DEFAULT_CR}" oninput="update()">
-    <span class="cv" id="v-cr">{DEFAULT_CR}%</span>
+<!-- ── HERO ── -->
+<div class="hero">
+  <div>
+    <div class="hero-eyebrow">Sales Funnel Review · Weekly Cohort</div>
+    <h1>First Intro<br><em>Funnel</em><br>Performance</h1>
+    <p class="hero-desc">Week-over-week analysis across {len(stages)} funnel stages. Prepared for internal team and executive leadership.</p>
   </div>
-  <div class="csep"></div>
-  <div class="cg">
-    <span class="cl">ACV</span>
-    <input type="range" id="sl-acv" min="40" max="75" step="1" value="{DEFAULT_ACV}" oninput="update()">
-    <span class="cv" id="v-acv">${DEFAULT_ACV}K</span>
+  <div class="hero-meta">
+    <div class="meta-item"><div class="meta-label">Weeks Tracked</div><div class="meta-value" id="hmWeeks">{len(weeks)} weeks</div></div>
+    <div class="meta-item"><div class="meta-label">Funnel Stages</div><div class="meta-value" id="hmStages">{len(stages)} stages</div></div>
+    <div class="meta-item"><div class="meta-label">Top-of-Funnel Volume</div><div class="meta-value" id="hmTof">{top} first calls</div></div>
+    <div class="meta-item"><div class="meta-label">Overall Close Rate</div><div class="meta-value accent" id="hmClose">{close_rate}% ({kpi[11]['total'] if 11 in kpi else 'N/A'} won)</div></div>
   </div>
-  <div class="csep"></div>
-  <div class="cg">
-    <span class="cl">Leads / Mo</span>
-    <input type="range" id="sl-leads" min="40" max="300" step="5" value="{DEFAULT_LEADS}" oninput="update()">
-    <span class="cv" id="v-leads">{DEFAULT_LEADS}</span>
-  </div>
-  <div class="csep"></div>
-  <span class="cbadge">All pages update live</span>
 </div>
 
-
-<!-- ═══════════════════════════════
-     SLIDE 01 · PIPELINE FLOW
-════════════════════════════════ -->
-<div class="page active" id="page-0">
-  <div class="plabel">Slide 01 · Architecture</div>
-  <h2>Lead → Qualified → Closed</h2>
-  <p class="sub" id="s1-sub">25 projected closes required each month · 5 planned carries are structural, not failure</p>
-
-  <div class="prow">
-    <div class="ptile">
-      <div class="parr">→</div>
-      <div class="psl">Raw Leads</div>
-      <div class="psn" id="p1-leads">265</div>
-      <div class="psd">Monthly lead volume to generate <span id="p1-proj">25</span> close-ready deals at <span id="p1-cr">9.5%</span> close rate. Planned carries priced in.</div>
-      <span class="tag tb" id="p1-wk">~61 / wk</span>
-    </div>
-    <div class="ptile">
-      <div class="parr">→</div>
-      <div class="psl">MQL</div>
-      <div class="psd" style="margin-top:6px;">CS/AM qualification layer. <span id="p1-cr2">9.5%</span> close rate applied to yield <span id="p1-proj2">25</span> projected closes.</div>
-      <span class="tag tr">~60–65% drop</span>
-    </div>
-    <div class="ptile">
-      <div class="parr">→</div>
-      <div class="psl">SQL</div>
-      <div class="psd" style="margin-top:6px;">Sales process initiates. Discovery, demo, scoping. ACV at <span id="p1-acv">$51K</span> ($36K software + $15K implementation).</div>
-      <span class="tag tr">Significant attrition</span>
-    </div>
-    <div class="ptile feat">
-      <div class="parr">→</div>
-      <div class="psl">Projected Closes</div>
-      <div class="psn" id="p1-proj3">25</div>
-      <div class="psd">Monthly quota target. <span id="p1-cw">20</span> close in window. <span id="p1-carry">5</span> push to next month — designed into model.</div>
-      <span class="tag tb" id="p1-carry-tag">5 carry → M+1</span>
-    </div>
-    <div class="ptile">
-      <div class="psl">Closed Won</div>
-      <div class="psn" id="p1-cw2">20</div>
-      <div class="psd">Actual closed won. <span id="p1-arr">$1.02M</span> ARR at <span id="p1-cw3">20</span> × <span id="p1-acv2">$51K</span>.</div>
-      <span class="tag tg" id="p1-arr-tag">$1.02M / mo</span>
-    </div>
+<!-- ── SECTION 01: COHORT FILTERS ── -->
+<section id="filters">
+  <div class="section-header">
+    <span class="section-num">01</span>
+    <h2 class="section-title">Cohort Filters</h2>
+    <span class="section-subtitle">Select dataset, then apply week/stage exclusions</span>
   </div>
 
-  <div class="divider"></div>
-
-  <div class="g4">
-    <div class="stat"><div class="slabel">Proj. Closes / Mo</div><div class="sval by" id="s1-proj" style="font-size:28px;">25</div><div class="snote">Monthly quota benchmark</div></div>
-    <div class="stat"><div class="slabel">Closed Won / Mo</div><div class="sval" id="s1-cw">20</div><div class="snote" id="s1-arr-note">20 × $51K = $1.02M ARR</div></div>
-    <div class="stat"><div class="slabel">Leads Required / Mo</div><div class="sval" id="s1-leads">265</div><div class="snote" id="s1-leads-note">9.5% × 265 = 25 projected</div></div>
-    <div class="stat"><div class="slabel">Close Rate</div><div class="sval" id="s1-cr">9.5%</div><div class="snote">MQL → Closed Won</div></div>
-  </div>
-
-  <footer><span class="fmeta">Pipeline Intelligence · KeychainOS · {GENERATED_AT}</span><span class="fconf">Confidential</span></footer>
-</div>
-
-
-<!-- ═══════════════════════════════
-     SLIDE 02 · METRICS
-════════════════════════════════ -->
-<div class="page" id="page-1">
-  <div class="plabel">Slide 02 · ACV & Velocity</div>
-  <h2>ACV · Velocity · Rep Efficiency</h2>
-  <p class="sub">Deal value structure, monthly targets, and rep productivity across headcount scenarios</p>
-
-  <div class="g2" style="margin-top:22px;">
-    <div class="card">
-      <div class="plabel" style="margin-bottom:10px;">Deal Value Breakdown</div>
-      <div style="font-size:42px;font-weight:800;letter-spacing:-1px;line-height:1;" id="s2-acv-big">$51,000</div>
-      <div style="font-size:11px;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;color:var(--secondary);margin-top:4px;">Blended ACV Per Deal</div>
-      <div class="g3" style="margin-top:14px;gap:8px;">
-        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;">
-          <div style="font-size:11px;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;color:var(--secondary);margin-bottom:4px;">Software</div>
-          <div style="font-size:22px;font-weight:800;letter-spacing:-0.5px;" id="s2-sw">$36K</div>
-        </div>
-        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;">
-          <div style="font-size:11px;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;color:var(--secondary);margin-bottom:4px;">Impl.</div>
-          <div style="font-size:22px;font-weight:800;letter-spacing:-0.5px;" id="s2-impl">$15K</div>
-        </div>
-        <div style="background:var(--text);border-radius:8px;padding:12px;">
-          <div style="font-size:11px;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;color:rgba(255,255,255,0.35);margin-bottom:4px;">Total</div>
-          <div style="font-size:22px;font-weight:800;letter-spacing:-0.5px;color:var(--accent);" id="s2-acv-tot">$51K</div>
-        </div>
+  <!-- ── DATASET TOGGLE ── -->
+  <div class="ds-toggle-bar" id="dsToggle">
+    <div class="ds-tab ds-active" id="dsTabAll" onclick="switchDataset('all')">
+      <div>
+        <div class="ds-tab-label">All Leads</div>
+        <div class="ds-tab-sub">Full funnel dataset — all leads regardless of ICP fit</div>
       </div>
-      <div class="ablock"><div class="aicon">→</div><div class="atext" id="s2-acv-note"><strong>ACV at $51K:</strong> $36K software + $15K implementation. Adjust slider to model different deal sizes.</div></div>
-    </div>
-    <div class="card">
-      <div class="plabel" style="margin-bottom:10px;">Monthly Targets</div>
-      <div class="mrow"><span class="mrl">Projected Closes / Month</span><span class="mrv" id="s2-proj" style="font-weight:800;">25</span></div>
-      <div class="mrow"><span class="mrl">Closed Won / Month</span><span class="mrv" id="s2-cw">20</span></div>
-      <div class="mrow"><span class="mrl">ARR / Month</span><span class="mrv" id="s2-arr-mo">$1.02M</span></div>
-      <div class="mrow"><span class="mrl">ARR / Quarter (baseline)</span><span class="mrv" id="s2-arr-q">$3.52M</span></div>
-      <div class="mrow"><span class="mrl">ARR / Year</span><span class="mrv" id="s2-arr-yr">$12.24M</span></div>
-      <div class="mrow"><span class="mrl">Leads Required / Month</span><span class="mrv" id="s2-leads">265</span></div>
-    </div>
-  </div>
-
-  <div class="divider"></div>
-  <div class="plabel" style="margin-bottom:10px;">Rep Efficiency Matrix · Closed Won Per Rep Per Month</div>
-  <div class="card" style="padding:0;overflow:hidden;">
-    <table><thead><tr><th>Headcount</th><th>Target / Rep</th><th>Actual / Rep</th><th>Total Closed</th><th>Monthly ARR</th><th>Status</th></tr></thead>
-    <tbody id="rep-tbody"></tbody></table>
-  </div>
-  <div class="ablock"><div class="aicon">→</div><div class="atext"><strong>Diagnosis:</strong> Past 8 reps, per-rep output degrades without additional lead volume. Pipeline capacity is the constraint, not headcount. Efficiency drops 47% from 6→11 reps while total closes remain flat.</div></div>
-
-  <footer><span class="fmeta">Pipeline Intelligence · KeychainOS · {GENERATED_AT}</span><span class="fconf">Confidential</span></footer>
-</div>
-
-
-<!-- ═══════════════════════════════
-     SLIDE 03 · FUNNEL
-════════════════════════════════ -->
-<div class="page" id="page-2">
-  <div class="plabel">Slide 03 · Funnel</div>
-  <h2>Leads → Stages → Closed</h2>
-  <p class="sub" id="s3-sub">Month 1 stage-by-stage attrition</p>
-
-  <div style="display:grid;grid-template-columns:1fr 290px;gap:20px;margin-top:22px;align-items:start;">
-    <div>
-      <div class="plabel" style="margin-bottom:12px;">Stage Attrition · Month 1</div>
-      <div class="frow"><div class="ftrack"><div class="ffill" style="width:100%;"></div><span class="fbl">Raw Leads Injected</span><span class="fbv" id="f-leads">265</span></div></div>
-      <div class="fdrop" id="f-d1">~133 lost at initial outreach / unresponsive</div>
-      <div class="frow"><div class="ftrack"><div class="ffill" id="f-f2" style="width:50%;"></div><span class="fbl">Initial Response</span><span class="fbv" id="f-res">133</span></div></div>
-      <div class="fdrop" id="f-d2">~52 disqualified at CS/AM qualification</div>
-      <div class="frow"><div class="ftrack"><div class="ffill" id="f-f3" style="width:31%;"></div><span class="fbl">MQL · CS/AM Qualified</span><span class="fbv" id="f-mql">81</span></div></div>
-      <div class="fdrop" id="f-d3">~29 lost in discovery / no product fit</div>
-      <div class="frow"><div class="ftrack"><div class="ffill" id="f-f4" style="width:20%;"></div><span class="fbl">SQL · Sales Engaged</span><span class="fbv" id="f-sql">52</span></div></div>
-      <div class="fdrop" id="f-d4">~27 lost during proposal / evaluation</div>
-      <div class="frow"><div class="ftrack" style="border-color:rgba(245,208,0,0.5);background:rgba(245,208,0,0.04);"><div class="ffill" id="f-f5" style="width:9.5%;opacity:0.35;"></div><span class="fbl" style="font-weight:600;color:var(--text);">Projected Close Quota</span><span class="fbv" id="f-proj" style="font-weight:800;">25</span></div></div>
-      <div class="fdrop fc" style="color:var(--green);" id="f-cn">5 of 25 carry to Month 2 — designed into model</div>
-      <div class="frow"><div class="ftrack" style="border-color:rgba(26,158,95,0.3);"><div class="ffill fg" id="f-f6" style="width:7.5%;"></div><span class="fbl" style="color:var(--green);font-weight:600;">Closed Won · M1</span><span class="fbv fg" id="f-cw">20</span></div></div>
-    </div>
-
-    <div style="display:flex;flex-direction:column;gap:12px;">
-      <div class="card">
-        <div class="slabel">Leads per Proj. Close</div>
-        <div style="font-size:36px;font-weight:800;letter-spacing:-1px;line-height:1;margin:4px 0;" id="f-ratio">10.6</div>
-        <div style="font-size:11px;color:var(--secondary);" id="f-rn">265 ÷ 25 projected = 10.6:1</div>
-        <div class="tblock"><span class="tblabel">ACV</span><span class="tbval" id="f-acv">$51K</span></div>
+      <div class="ds-tab-meta">
+        {top} calls · {close_rate}% close<br>
+        {len(weeks)} weeks
       </div>
-      <div class="card">
-        <div class="slabel">Monthly Lead Target</div>
-        <div style="font-size:36px;font-weight:800;letter-spacing:-1px;line-height:1;margin:4px 0;" class="by" id="f-l2">265</div>
-        <div style="font-size:11px;color:var(--secondary);margin-top:8px;" id="f-ln">9.5% × 265 = 25 closes<br>20 land · 5 carry → M2</div>
+    </div>
+    <div class="ds-tab" id="dsTabIcp" onclick="switchDataset('icp')">
+      <div>
+        <div class="ds-tab-label">ICP Only</div>
+        <div class="ds-tab-sub">Close rate and cohort metrics on ICP-qualified leads only</div>
       </div>
-      <div class="card">
-        <div class="slabel">Weekly Benchmark</div>
-        <div style="font-size:36px;font-weight:800;letter-spacing:-1px;line-height:1;margin:4px 0;" id="f-wk">~61</div>
-        <div style="font-size:11px;color:var(--secondary);margin-top:6px;" id="f-wn">265 ÷ 4.33 weeks<br>5–6 projected closes/wk<br>4–5 actual closes/wk</div>
+      <div class="ds-tab-meta">
+        {icp_top} calls · {icp_close}% close<br>
+        {icp_weeks_count} weeks
       </div>
     </div>
   </div>
 
-  <footer><span class="fmeta">Pipeline Intelligence · KeychainOS · {GENERATED_AT}</span><span class="fconf">Confidential</span></footer>
-</div>
+  <!-- ICP active banner -->
+  <div class="icp-banner" id="icpBanner">
+    <div class="icp-banner-dot"></div>
+    ICP Filter Active — all KPIs, charts, and conversion rates reflect ICP-qualified leads only
+  </div>
 
-
-<!-- ═══════════════════════════════
-     SLIDE 04 · SLIPPAGE
-════════════════════════════════ -->
-<div class="page" id="page-3">
-  <div class="plabel">Slide 04 · Carry Resolution</div>
-  <h2>Slippage · Carry · Resolution</h2>
-  <p class="sub" id="s4-sub">25 projected closes is the monthly quota · 5 planned carries are structural · 3-month map</p>
-
-  <div class="sgrid">
-    <div class="sc">
-      <div class="smo">Month 1 · Close Window</div>
-      <div class="srow"><span class="srl">Projected close quota</span><span class="srv" id="s4-p1" style="font-weight:800;">25</span></div>
-      <div class="srow"><span class="srl">Closed Won M1</span><span class="srv green" id="s4-cw1">20</span></div>
-      <div class="srow"><span class="srl">Planned carry (built-in)</span><span class="srv" id="s4-c1">5</span></div>
-      <div class="srow"><span class="srl">Leads required</span><span class="srv" id="s4-l1">265</span></div>
-      <div class="tblock"><span class="tblabel">Closed ARR · M1</span><span class="tbval" id="s4-a1">$1.02M</span></div>
-      <div style="margin-top:10px;"><span class="stag stc" id="s4-ct">5 carry → M2</span></div>
-      <div class="lnote" id="s4-w1">~61 leads / week</div>
-    </div>
-    <div class="sc">
-      <div class="smo">Month 2 · Carryover + Base</div>
-      <div class="srow"><span class="srl">New projected closes</span><span class="srv" id="s4-p2" style="font-weight:800;">25</span></div>
-      <div class="srow"><span class="srl">M1 carryover closes</span><span class="srv green" id="s4-cr2">+4</span></div>
-      <div class="srow"><span class="srl">Lost from M1 carry (20%)</span><span class="srv red">−1</span></div>
-      <div class="srow"><span class="srl">Total closes M2</span><span class="srv green" id="s4-cw2">24</span></div>
-      <div class="srow"><span class="srl">Fresh leads required</span><span class="srv" id="s4-l2">265</span></div>
-      <div class="tblock"><span class="tblabel">Closed ARR · M2</span><span class="tbval" id="s4-a2">$1.22M</span></div>
-      <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:4px;">
-        <span class="stag stc" id="s4-m2t">4 close (M1)</span>
-        <span class="stag stl">1 closed lost</span>
-        <span class="stag stc">~1 → M3</span>
+  <!-- ── CLOSE RATE BASE TOGGLE ── -->
+  <div class="cr-toggle-bar" id="crToggle">
+    <div class="cr-tab cr-active" id="crTabTof" onclick="switchCRBase(&apos;tof&apos;)">
+      <div>
+        <div class="cr-tab-label">vs. First Call Scheduled</div>
+        <div class="cr-tab-sub">Close rate measured against top-of-funnel entries (sn 01)</div>
       </div>
-      <div class="lnote" id="s4-w2">265 fresh + 4 carryover</div>
+      <div class="cr-tab-meta" id="crMetaTof">{close_rate}% close &middot; {kpi[1]["total"] if 1 in kpi else "N/A"} calls</div>
     </div>
-    <div class="sc">
-      <div class="smo">Month 3 · Normalized</div>
-      <div class="srow"><span class="srl">New projected closes</span><span class="srv" id="s4-p3" style="font-weight:800;">25</span></div>
-      <div class="srow"><span class="srl">M2 carryover closes</span><span class="srv green">+4</span></div>
-      <div class="srow"><span class="srl">M1 residual to M3</span><span class="srv green">+1</span></div>
-      <div class="srow"><span class="srl">Total closes M3</span><span class="srv green" id="s4-cw3">~25</span></div>
-      <div class="srow"><span class="srl">Fresh leads required</span><span class="srv" id="s4-l3">265</span></div>
-      <div class="tblock"><span class="tblabel">Closed ARR · M3</span><span class="tbval" id="s4-a3">$1.28M</span></div>
-      <div style="margin-top:10px;"><span class="stag sts">Steady state</span></div>
-      <div class="lnote" id="s4-w3">265 leads / mo · normalized</div>
+    <div class="cr-tab" id="crTabDemo" onclick="switchCRBase(&apos;demo&apos;)">
+      <div>
+        <div class="cr-tab-label">vs. Initial Demo Scheduled</div>
+        <div class="cr-tab-sub">Close rate measured against initial demo scheduled volume (sn 03)</div>
+      </div>
+      <div class="cr-tab-meta" id="crMetaDemo">{close_demo_rate}% close &middot; {kpi[3]["total"] if 3 in kpi else "N/A"} demos</div>
     </div>
   </div>
 
-  <div class="divider"></div>
-  <div class="g4">
-    <div class="stat"><div class="slabel">Total Q Deals</div><div class="sval" id="s4-tq">69</div><div class="snote" id="s4-tn">20 + 24 + 25</div></div>
-    <div class="stat"><div class="slabel">Q ARR Baseline</div><div class="sval green" id="s4-aq">$3.52M</div><div class="snote">Carryover fully absorbed</div></div>
-    <div class="stat"><div class="slabel">Deals Lost</div><div class="sval red">1</div><div class="snote">M1 carry → closed lost M2</div></div>
-    <div class="stat"><div class="slabel">Monthly Proj. Quota</div><div class="sval by" id="s4-q" style="font-size:28px;">25</div><div class="snote">Steady-state · <span id="s4-ln">265</span> leads/mo</div></div>
+  <div class="cf-grid" id="cfGrid"></div>
+
+  <div class="cf-chips" id="cfChips">
+    <span class="cf-chips-lbl">Excluded:</span>
+    <span class="cf-none" id="cfNone">None — all data included</span>
   </div>
 
-  <footer><span class="fmeta">Pipeline Intelligence · KeychainOS · {GENERATED_AT}</span><span class="fconf">Confidential</span></footer>
-</div>
-
-
-<!-- ═══════════════════════════════
-     SLIDE 05 · REVENUE SCENARIOS
-════════════════════════════════ -->
-<div class="page" id="page-4">
-  <div class="plabel">Slide 05 · Revenue Projection</div>
-  <h2>Revenue Projection · 3 Scenarios</h2>
-  <p class="sub">Monthly ARR trajectory across underperformance, baseline, and outperformance · Q comparison</p>
-
-  <div class="scgrid">
-    <div class="sctile under">
-      <div class="schead">↓ Underperformance</div>
-      <div class="scdesc" id="sc-ud">Close rate drops to ~6.5%<br>Lead debt: 20–30% below target<br>Process breakdown / rep churn<br>Carries unrecovered</div>
-      <div class="scmr"><span class="scml">Month 1</span><span class="scmv" id="sc-u1">$714K</span></div>
-      <div class="scmr"><span class="scml">Month 2</span><span class="scmv" id="sc-u2">$816K</span></div>
-      <div class="scmr"><span class="scml">Month 3</span><span class="scmv" id="sc-u3">$867K</span></div>
-      <div style="background:var(--text);border-radius:8px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;">
-        <span style="font-size:11px;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;color:rgba(255,255,255,0.35);">Q ARR</span>
-        <span style="font-size:24px;font-weight:800;letter-spacing:-0.5px;color:var(--red);" id="sc-uq">$2.40M</span>
+  <div class="cf-bar">
+    <span class="cf-bar-label">Impact</span>
+    <div class="cf-metrics">
+      <div>
+        <div class="cf-metric-val y" id="cfWeeksVal">—</div>
+        <div class="cf-metric-lbl">Weeks Removed</div>
       </div>
-      <div class="sccond" id="sc-uc"><span>— 14 deals/mo avg</span><span>— 6.5% close rate</span><span>— Lead volume deficit</span><span>— Carries unrecovered</span></div>
+      <div>
+        <div class="cf-metric-val r" id="cfStagesVal">—</div>
+        <div class="cf-metric-lbl">Stages Hidden</div>
+      </div>
+      <div>
+        <div class="cf-metric-val" id="cfRetainVal">100%</div>
+        <div class="cf-metric-lbl">Data Retained</div>
+      </div>
     </div>
-    <div class="sctile base">
-      <div class="schead">→ Baseline</div>
-      <div class="scdesc" id="sc-bd">Close rate holds at 9.5%<br>265 leads / mo sustained<br>25 projected closes hit<br>20 land · 5 carry resolved</div>
-      <div class="scmr"><span class="scml">Month 1</span><span class="scmv" id="sc-b1">$1.02M</span></div>
-      <div class="scmr"><span class="scml">Month 2</span><span class="scmv" id="sc-b2">$1.22M</span></div>
-      <div class="scmr"><span class="scml">Month 3</span><span class="scmv" id="sc-b3">$1.28M</span></div>
-      <div style="background:var(--text);border-radius:8px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;">
-        <span style="font-size:11px;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;color:rgba(255,255,255,0.35);">Q ARR</span>
-        <span style="font-size:24px;font-weight:800;letter-spacing:-0.5px;color:var(--accent);" id="sc-bq">$3.52M</span>
-      </div>
-      <div class="sccond" id="sc-bc"><span>— 25 projected closes / mo</span><span>— 9.5% close rate holds</span><span>— 265 leads / mo</span><span>— M1 carry resolved by M3</span></div>
+    <button class="cf-apply" id="cfApply" disabled onclick="applyFilters()">Apply Filters</button>
+  </div>
+</section>
+
+<!-- ── SECTION 02: KPIs ── -->
+<section id="kpis">
+  <div class="section-header">
+    <span class="section-num">02</span>
+    <h2 class="section-title">Summary KPIs</h2>
+    <span class="section-subtitle">Key volume and efficiency metrics across the full period</span>
+  </div>
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <div class="kpi-label">First Calls Scheduled</div>
+      <div class="kpi-value" id="kv1">{kpi[1]['total'] if 1 in kpi else 'N/A'}</div>
+      <div class="kpi-sub">Top of funnel entries</div>
+      <div class="kpi-badge featured" id="ksPeak">Peak: {peak_wk} ({peak_val})</div>
     </div>
-    <div class="sctile over">
-      <div class="schead">↑ Outperformance</div>
-      <div class="scdesc" id="sc-od">Close rate improves to ~12.5%<br>Lead volume sustained at 265<br>Compressed cycle · fewer carries<br>Carry rate drops to ~10%</div>
-      <div class="scmr"><span class="scml">Month 1</span><span class="scmv" id="sc-o1">$1.33M</span></div>
-      <div class="scmr"><span class="scml">Month 2</span><span class="scmv" id="sc-o2">$1.63M</span></div>
-      <div class="scmr"><span class="scml">Month 3</span><span class="scmv" id="sc-o3">$1.68M</span></div>
-      <div style="background:var(--text);border-radius:8px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;">
-        <span style="font-size:11px;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;color:rgba(255,255,255,0.35);">Q ARR</span>
-        <span style="font-size:24px;font-weight:800;letter-spacing:-0.5px;color:var(--green);" id="sc-oq">$4.64M</span>
-      </div>
-      <div class="sccond" id="sc-oc"><span>— 26 deals/mo avg</span><span>— 12.5% close rate</span><span>— 265 leads / mo sustained</span><span>— Carry rate drops to ~10%</span></div>
+    <div class="kpi-card">
+      <div class="kpi-label">Meetings Completed</div>
+      <div class="kpi-value" id="kv2">{kpi[2]['total'] if 2 in kpi else 'N/A'}</div>
+      <div class="kpi-sub" id="ks1">{show_rate}% show rate</div>
+      <div class="kpi-badge green">Strong attendance</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Proposals Sent</div>
+      <div class="kpi-value" id="kv8">{kpi[8]['total'] if 8 in kpi else 'N/A'}</div>
+      <div class="kpi-sub" id="ks8">{prop_top}% of top-of-funnel</div>
+      <div class="kpi-badge amber">Watch drop-off</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Closed Won</div>
+      <div class="kpi-value" id="kv11">{kpi[11]['total'] if 11 in kpi else 'N/A'}</div>
+      <div class="kpi-sub" id="ks11">{close_rate}% overall close rate</div>
+      <div class="kpi-badge green">{prop_to_close}% of proposals</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Initial Demos Completed</div>
+      <div class="kpi-value" id="kv4">{kpi[4]['total'] if 4 in kpi else 'N/A'}</div>
+      <div class="kpi-sub">{demo_top}% of top-of-funnel</div>
+      <div class="kpi-badge featured">Peak: {peak_week(kpi[4]['values'], weeks) if 4 in kpi else 'N/A'}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Second Demos Scheduled</div>
+      <div class="kpi-value" id="kv5">{kpi[5]['total'] if 5 in kpi else 'N/A'}</div>
+      <div class="kpi-sub" id="ks5">{second_demo_r}% of initial demos</div>
+      <div class="kpi-badge amber">Key drop-off point</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Closed Lost</div>
+      <div class="kpi-value" id="kv10" style="color:var(--red);">{kpi[10]['total'] if 10 in kpi else 'N/A'}</div>
+      <div class="kpi-sub">vs. {kpi[11]['total'] if 11 in kpi else 'N/A'} closed won</div>
+      <div class="kpi-badge amber">{loss_ratio} loss ratio</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Avg Weekly Entries</div>
+      <div class="kpi-value" id="kvAvg">{avg_weekly}</div>
+      <div class="kpi-sub">First calls per week</div>
+      <div class="kpi-badge featured">Excl. peak: ~{avg_excl}</div>
     </div>
   </div>
+  <div class="alert-block">
+    <div class="alert-icon">!</div>
+    <div id="kpiAlert"><strong>Key signal:</strong> The week of {peak_wk} was a clear outlier with {peak_val} first calls — {spike_mult}x the weekly average. Excluding it, average weekly volume is ~{avg_excl}.</div>
+  </div>
+</section>
 
-  <div class="divider"></div>
-  <div class="g3">
-    <div class="stat" style="background:#FFF8F8;border-color:#F5DADA;">
-      <div class="slabel">Q Miss vs Baseline</div>
-      <div class="sval red" id="sc-du">−$1.12M</div>
-      <div class="snote" id="sc-dun">$2.40M vs $3.52M</div>
-    </div>
-    <div class="stat">
-      <div class="slabel">Baseline Quarter</div>
-      <div class="sval by" id="sc-bq2" style="font-size:26px;">$3.52M</div>
-      <div class="snote" id="sc-bn">9.5% close · 265 leads / mo</div>
-    </div>
-    <div class="stat" style="background:#F5FFF9;border-color:#C8EDD9;">
-      <div class="slabel">Q Upside vs Baseline</div>
-      <div class="sval green" id="sc-do">+$1.12M</div>
-      <div class="snote" id="sc-don">$4.64M vs $3.52M</div>
+<!-- ── SECTION 03: CHART ── -->
+<section id="chart">
+  <div class="section-header">
+    <span class="section-num">03</span>
+    <h2 class="section-title">Week-over-Week Trend</h2>
+    <span class="section-subtitle">All stages overlaid. Click legend to toggle.</span>
+  </div>
+  <div class="chart-controls">
+    <div style="font-size:0.65rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);">Toggle stages using the legend</div>
+    <div class="chart-actions">
+      <button class="btn" onclick="showAll()">Show All</button>
+      <button class="btn" onclick="hideAll()">Hide All</button>
     </div>
   </div>
+  <div class="chart-layout">
+    <div class="chart-box"><canvas id="mainChart"></canvas></div>
+    <div class="legend-panel" id="legend"></div>
+  </div>
+</section>
 
-  <footer><span class="fmeta">Pipeline Intelligence · KeychainOS · {GENERATED_AT}</span><span class="fconf">Confidential</span></footer>
-</div>
+<!-- ── SECTION 04: CONVERSION ── -->
+<section id="conversion">
+  <div class="section-header">
+    <span class="section-num">04</span>
+    <h2 class="section-title">Stage Conversion Rates</h2>
+    <span class="section-subtitle">Step-by-step and vs. first meeting completed</span>
+  </div>
+  <table class="pipeline-table">
+    <thead>
+      <tr>
+        <th style="width:2.5rem">#</th>
+        <th>Stage</th>
+        <th>Total</th>
+        <th>vs. Previous Stage</th>
+        <th>vs. First Meeting Completed</th>
+        <th>Peak Week</th>
+        <th style="width:3rem"></th>
+      </tr>
+    </thead>
+    <tbody id="convTable"></tbody>
+  </table>
+  <div class="alert-block">
+    <div class="alert-icon">↓</div>
+    <div><strong>Largest drop-off:</strong> Initial demo completed to second demo scheduled drops to {second_demo_r}%. Investigate whether prospects are disengaging or the team is not pursuing second demos.</div>
+  </div>
+</section>
 
+<!-- ── SECTION 05: INSIGHTS ── -->
+<section id="insights">
+  <div class="section-header">
+    <span class="section-num">05</span>
+    <h2 class="section-title">Trends & Correlations</h2>
+    <span class="section-subtitle">Patterns and relationship to closed won outcomes</span>
+  </div>
+  <div class="trend-grid" style="margin-bottom:1px;">
+    <div class="trend-card">
+      <div class="trend-card-header">
+        <div class="trend-icon yellow">↑</div>
+        <div class="trend-tag insight">Correlation</div>
+      </div>
+      <h3>Volume Spikes Drive Wins</h3>
+      <p>High top-of-funnel weeks show closed won activity <strong>3–5 weeks later</strong>. The {peak_wk} spike aligns with downstream proposal and close activity in subsequent weeks.</p>
+    </div>
+    <div class="trend-card">
+      <div class="trend-card-header">
+        <div class="trend-icon green">✓</div>
+        <div class="trend-tag positive">Strength</div>
+      </div>
+      <h3>High Meeting Attendance</h3>
+      <p>The <strong>{show_rate}% show rate</strong> signals strong prospect quality. Deals reaching a completed meeting close at <strong>{close_meeting}%</strong>.</p>
+    </div>
+    <div class="trend-card">
+      <div class="trend-card-header">
+        <div class="trend-icon amber">→</div>
+        <div class="trend-tag watch">Watch</div>
+      </div>
+      <h3>Proposal Efficiency</h3>
+      <p>Of {kpi[8]['total'] if 8 in kpi else 'N/A'} proposals sent, <strong>{kpi[11]['total'] if 11 in kpi else 'N/A'} won vs. {kpi[10]['total'] if 10 in kpi else 'N/A'} lost</strong> — a {loss_ratio} loss ratio. Earlier disqualification could improve close rate.</p>
+    </div>
+  </div>
+  <div class="two-col">
+    <div class="trend-card">
+      <div class="trend-card-header">
+        <div class="trend-icon yellow">→</div>
+        <div class="trend-tag insight">Pattern</div>
+      </div>
+      <h3>Second Demo Predicts Close</h3>
+      <p>Service agreements ({kpi[9]['total'] if 9 in kpi else 'N/A'}) and closed won ({kpi[11]['total'] if 11 in kpi else 'N/A'}) match exactly. <strong>Getting to a second demo is the strongest win predictor.</strong></p>
+    </div>
+    <div class="trend-card">
+      <div class="trend-card-header">
+        <div class="trend-icon amber">↓</div>
+        <div class="trend-tag watch">Risk</div>
+      </div>
+      <h3>Seasonal Volume Dip</h3>
+      <p>Late November through mid-December saw <strong>40–60% below average</strong> weekly volume. Monitor downstream closed won outcomes in subsequent weeks.</p>
+    </div>
+  </div>
+  <div class="corr-box"><canvas id="corrChart"></canvas></div>
+  <div class="alert-block">
+    <div class="alert-icon">→</div>
+    <div><strong>Focus areas:</strong> (1) Structured follow-up after initial demos to drive second demo rate above {second_demo_r}%. (2) Move disqualification earlier to improve proposal close rate. (3) Use {peak_wk} volume as a leading indicator — expect elevated closes 3–5 weeks out.</div>
+  </div>
+</section>
+
+{sales_motion_html}
+
+<!-- ── FOOTER ── -->
+<footer>
+  <div class="footer-left">KeychainOS · Sales Funnel Review · Auto-generated {generated_at} · <span id="footerMeta">{len(weeks)} weeks · {len(stages)} stages</span></div>
+  <div class="footer-right">Confidential</div>
+</footer>
 
 <script>
-// ── HELPERS ──────────────────────────────────────────────
-const SW_R = {SW_RATIO:.6f};
-const IMPL_R = {IMPL_RATIO:.6f};
-const CR_DELTA = {CR_DELTA};  // ±pp additive variance
+const palette={js_pal};
 
+// ── SOURCE DATASETS ──
+const SOURCE = {{
+  all: {{
+    weeks: {js_weeks},
+    stages: {js_stages}
+  }},
+  icp: {{
+    weeks: {js_icp_weeks},
+    stages: {js_icp_stages}
+  }}
+}};
 
+// ── ACTIVE DATASET STATE ──
+let activeDataset = 'all';
+let baseWeeks  = SOURCE.all.weeks.slice();
+let baseStages = SOURCE.all.stages.map(s => ({{...s, values: s.values.slice()}}));
 
-function fmtM(n) {{
-  if(n>=1000000) return '$'+(n/1000000).toFixed(2)+'M';
-  return '$'+(n/1000).toFixed(0)+'K';
+// ── FILTERED STATE (applied on top of active dataset) ──
+let filteredWeeks  = baseWeeks.slice();
+let filteredStages = baseStages.map(s => ({{...s}}));
+const activeFilters = {{}};
+let crBase = 'tof';
+
+// ── DATASET SWITCH ──
+function switchDataset(ds) {{
+  activeDataset = ds;
+
+  // Reset cohort filters when switching datasets
+  Object.keys(activeFilters).forEach(k => activeFilters[k] = null);
+  document.querySelectorAll('.cf-row.cf-active').forEach(r => r.classList.remove('cf-active'));
+  updateCFPanel();
+
+  baseWeeks  = SOURCE[ds].weeks.slice();
+  baseStages = SOURCE[ds].stages.map(s => ({{...s, values: s.values.slice()}}));
+  filteredWeeks  = baseWeeks.slice();
+  filteredStages = baseStages.map(s => ({{...s}}));
+
+  // Toggle button states
+  document.getElementById('dsTabAll').classList.toggle('ds-active', ds === 'all');
+  document.getElementById('dsTabIcp').classList.toggle('ds-active', ds === 'icp');
+
+  // ICP banner
+  document.getElementById('icpBanner').classList.toggle('visible', ds === 'icp');
+
+  // Rebuild the week/stage filter grid for the new dataset
+  buildFilterGrid();
+  rebuildAll();
 }}
-function fmtK(n) {{ return '$'+Math.round(n/1000)+'K'; }}
-function set(id,val) {{
-  const el=document.getElementById(id);
-  if(!el)return;
-  const v=String(val);
-  if(el.textContent!==v){{el.textContent=v;el.classList.remove('changed');void el.offsetWidth;el.classList.add('changed');}}
-}}
-function setHtml(id,html) {{
-  const el=document.getElementById(id);
-  if(el)el.innerHTML=html;
+
+// ── CLOSE RATE BASE TOGGLE ──
+function switchCRBase(base) {{
+  crBase = base;
+  document.getElementById('crTabTof').classList.toggle('cr-active', base === 'tof');
+  document.getElementById('crTabDemo').classList.toggle('cr-active', base === 'demo');
+  rebuildAll();
 }}
 
-// ── CORE MODEL ────────────────────────────────────────────
-function model(cr, acv, leads) {{
-  const crd = cr/100;
-  const proj = Math.round(leads * crd);
-  const cw = Math.round(proj * 0.8);
-  const carry = proj - cw;
+// ── WEEK / STAGE FILTER ENGINE ──
+function getWeekFilters() {{
+  return baseWeeks.map((w, i) => ({{
+    id: 'week-' + i,
+    label: w,
+    desc: 'Exclude week of ' + w + ' from all visualizations',
+    type: 'week',
+    weekIdx: i
+  }}));
+}}
 
-  // M2: closed-window deals from fresh pipeline + resolved M1 carries
-  const m1Resolved = Math.round(carry * 0.8);  // 80% of M1 carry closes in M2
-  const m2cw = cw + m1Resolved;
-  const arrM2 = m2cw * acv;
+function getStageFilters() {{
+  return baseStages.map(s => ({{
+    id: 'stage-' + s.sn,
+    label: s.label,
+    desc: 'Remove stage ' + String(s.sn).padStart(2,'0') + ' from trend chart and conversion table',
+    type: 'stage',
+    sn: s.sn
+  }}));
+}}
 
-  // M3: fresh pipeline closes + M2 carries resolving + M1 residual that slipped past M2
-  const m2Carry = carry;                         // M2 generates same carry count as M1
-  const m2Resolved = Math.round(m2Carry * 0.8); // 80% of M2 carries close in M3
-  const m1SlippedToM3 = carry - m1Resolved;      // M1 deals that didn't close in M2
-  const m3cw = cw + m2Resolved + m1SlippedToM3;
-  const arrM3 = m3cw * acv;
+function buildFilterGrid() {{
+  const grid = document.getElementById('cfGrid');
+  grid.innerHTML = '';
 
-  const arrM1 = cw * acv;
-  const arrQ = arrM1 + arrM2 + arrM3;
-  const totalQ = cw + m2cw + m3cw;
+  const WEEK_FILTERS  = getWeekFilters();
+  const STAGE_FILTERS = getStageFilters();
 
-  // Funnel — response/MQL/SQL are lead-quality rates, independent of close rate
-  const response = Math.round(leads * 0.50);
-  const mql = Math.round(leads * 0.305);
-  const sql = Math.round(leads * 0.196);
+  const weeksByVol = WEEK_FILTERS.map(f => ({{
+    ...f,
+    vol: baseStages[0] ? baseStages[0].values[f.weekIdx] : 0
+  }})).sort((a,b) => b.vol - a.vol).slice(0, 3);
 
-  // Scenarios — vary CR only, same leads
-  // Scenarios use additive ±CR_DELTA pp offset from baseline CR
-  function sc(delta) {{
-    const sCrPct = Math.max(0.1, cr + delta);
-    const sCr = sCrPct / 100;
-    const sProj = Math.round(leads * sCr);
-    const sCw = Math.round(sProj * 0.8);
-    const sCarry = sProj - sCw;
-    const sM1r = Math.round(sCarry * 0.8);
-    const sM2cw = sCw + sM1r;
-    const sM2carry = sCarry;
-    const sM2r = Math.round(sM2carry * 0.8);
-    const sM1slipped = sCarry - sM1r;
-    const sM3cw = sCw + sM2r + sM1slipped;
-    return {{
-      cr: sCrPct.toFixed(1),
-      cw: sCw,
-      m1: sCw * acv,
-      m2: sM2cw * acv,
-      m3: sM3cw * acv,
-      q: (sCw + sM2cw + sM3cw) * acv
-    }};
+  const stagePicks = STAGE_FILTERS.slice(0, 3);
+
+  const leftCol = document.createElement('div');
+  leftCol.style.cssText = 'display:flex;flex-direction:column;border-right:1px solid var(--border);';
+  const rightCol = document.createElement('div');
+  rightCol.style.cssText = 'display:flex;flex-direction:column;';
+
+  weeksByVol.forEach(f => leftCol.appendChild(makeFilterRow(f, 'cf-tag-week', 'Week')));
+  stagePicks.forEach(f => rightCol.appendChild(makeFilterRow(f, 'cf-tag-stage', 'Stage')));
+
+  grid.appendChild(leftCol);
+  grid.appendChild(rightCol);
+}}
+
+function makeFilterRow(f, tagClass, tagLabel) {{
+  const row = document.createElement('div');
+  row.className = 'cf-row';
+  row.id = 'cfrow-' + f.id;
+  row.innerHTML = `
+    <div class="cf-toggle"></div>
+    <div class="cf-info">
+      <div class="cf-name">${{f.label}}</div>
+      <div class="cf-desc">${{f.desc}}</div>
+    </div>
+    <span class="cf-tag ${{tagClass}}">${{tagLabel}}</span>`;
+  row.addEventListener('click', () => toggleCF(f.id, f, row));
+  return row;
+}}
+
+function toggleCF(id, f, row) {{
+  const isActive = row.classList.toggle('cf-active');
+  activeFilters[id] = isActive ? f : null;
+  updateCFPanel();
+}}
+
+function updateCFPanel() {{
+  const active = Object.values(activeFilters).filter(Boolean);
+  const wCount = active.filter(f => f.type === 'week').length;
+  const sCount = active.filter(f => f.type === 'stage').length;
+  const totalWeeks = baseWeeks.length;
+  const retained = totalWeeks > 0
+    ? Math.round(((totalWeeks - wCount) / totalWeeks) * 100)
+    : 100;
+
+  document.getElementById('cfWeeksVal').textContent  = active.length ? wCount  : '—';
+  document.getElementById('cfStagesVal').textContent = active.length ? sCount  : '—';
+  document.getElementById('cfRetainVal').textContent = active.length ? retained + '%' : '100%';
+
+  const chipBar = document.getElementById('cfChips');
+  chipBar.querySelectorAll('.cf-chip').forEach(c => c.remove());
+  const noMsg = document.getElementById('cfNone');
+  if (active.length === 0) {{
+    noMsg.style.display = '';
+  }} else {{
+    noMsg.style.display = 'none';
+    active.forEach(f => {{
+      const chip = document.createElement('span');
+      chip.className = 'cf-chip';
+      chip.innerHTML = f.label + `<span class="cf-chip-x" onclick="removeCF('${{f.id}}')">✕</span>`;
+      chipBar.appendChild(chip);
+    }});
+  }}
+  document.getElementById('cfApply').disabled = active.length === 0;
+}}
+
+function removeCF(id) {{
+  activeFilters[id] = null;
+  const row = document.getElementById('cfrow-' + id);
+  if (row) row.classList.remove('cf-active');
+  updateCFPanel();
+}}
+
+function applyFilters() {{
+  const active = Object.values(activeFilters).filter(Boolean);
+  const excludeWeekIdxs = new Set(active.filter(f=>f.type==='week').map(f=>f.weekIdx));
+  const excludeSns      = new Set(active.filter(f=>f.type==='stage').map(f=>f.sn));
+
+  filteredWeeks = baseWeeks.filter((_,i) => !excludeWeekIdxs.has(i));
+  filteredStages = baseStages
+    .filter(s => !excludeSns.has(s.sn))
+    .map(s => ({{
+      ...s,
+      values: s.values.filter((_,i) => !excludeWeekIdxs.has(i))
+    }}));
+  filteredStages = filteredStages.map(s => ({{...s, total: s.values.reduce((a,b)=>a+b,0)}}));
+
+  rebuildAll();
+}}
+
+function rebuildAll() {{
+  rebuildHeroMeta();
+  rebuildKPIs();
+  rebuildChart();
+  rebuildConvTable();
+  rebuildCorrChart();
+  // Footer
+  const fm = document.getElementById('footerMeta');
+  if (fm) fm.textContent = filteredWeeks.length + ' weeks · ' + filteredStages.length + ' stages' + (activeDataset === 'icp' ? ' · ICP' : '');
+}}
+
+function rebuildHeroMeta() {{
+  const ws = filteredWeeks;
+  const ss = filteredStages;
+  const s1  = ss.find(s=>s.sn===1);
+  const s11 = ss.find(s=>s.sn===11);
+  const top   = s1  ? s1.total  : 0;
+  const s3    = ss.find(s=>s.sn===3);
+  const demoN = s3  ? s3.total  : 0;
+  const crDenom = crBase === 'demo' ? demoN : top;
+  const crLabel = crBase === 'demo' ? 'vs demo sched' : 'overall';
+  const cr  = (s11 && crDenom) ? (s11.total/crDenom*100).toFixed(1)+'%' : 'N/A';
+  const won = s11 ? s11.total : 'N/A';
+  document.getElementById('hmWeeks').textContent  = ws.length + ' weeks' + (activeDataset === 'icp' ? ' · ICP' : '');
+  document.getElementById('hmStages').textContent = ss.length + ' stages';
+  document.getElementById('hmTof').textContent    = top + ' first calls';
+  document.getElementById('hmClose').textContent  = cr + ' (' + won + ' won \u00b7 ' + crLabel + ')';
+  const tofPct  = (s1 && s11 && top)   ? (s11.total/top*100).toFixed(1)+'% close \u00b7 '+top+' calls'   : '\u2014';
+  const demoPct = (s3 && s11 && demoN) ? (s11.total/demoN*100).toFixed(1)+'% close \u00b7 '+demoN+' demos' : '\u2014';
+  const mtof  = document.getElementById('crMetaTof');
+  const mdemo = document.getElementById('crMetaDemo');
+  if (mtof)  mtof.textContent  = tofPct;
+  if (mdemo) mdemo.textContent = demoPct;
+}}
+
+function rebuildKPIs() {{
+  const ss  = filteredStages;
+  const ws  = filteredWeeks;
+  const kpi = {{}};
+  ss.forEach(s => kpi[s.sn] = s);
+  const top = kpi[1] ? kpi[1].total : 1;
+  const pct = (n,d) => d ? (n/d*100).toFixed(1)+'%' : 'N/A';
+
+  function setKPI(id, val) {{
+    const el = document.getElementById(id);
+    if (el) el.textContent = val;
   }}
 
-  const under = sc(-CR_DELTA);
-  const over  = sc(+CR_DELTA);
+  setKPI('kv1',  kpi[1]  ? kpi[1].total  : 'N/A');
+  setKPI('ks1',  kpi[1] && kpi[2] ? pct(kpi[2].total, kpi[1].total) + ' show rate' : '');
+  setKPI('kv2',  kpi[2]  ? kpi[2].total  : 'N/A');
+  setKPI('kv8',  kpi[8]  ? kpi[8].total  : 'N/A');
+  setKPI('ks8',  kpi[8]  ? pct(kpi[8].total, top) + ' of top-of-funnel' : '');
+  setKPI('kv11', kpi[11] ? kpi[11].total : 'N/A');
+  const crDenomKpi = (crBase === 'demo' && kpi[3]) ? kpi[3].total : top;
+  const crLabelKpi = crBase === 'demo' ? '% close vs. initial demo sched' : '% overall close rate';
+  setKPI('ks11', kpi[11] ? pct(kpi[11].total, crDenomKpi) + crLabelKpi : '');
+  setKPI('kv4',  kpi[4]  ? kpi[4].total  : 'N/A');
+  setKPI('kv5',  kpi[5]  ? kpi[5].total  : 'N/A');
+  setKPI('ks5',  kpi[4] && kpi[5] ? pct(kpi[5].total, kpi[4].total) + ' of initial demos' : '');
+  setKPI('kv10', kpi[10] ? kpi[10].total : 'N/A');
+  const avgW = ws.length ? (top/ws.length).toFixed(1) : 'N/A';
+  setKPI('kvAvg', avgW);
 
-  const wk = Math.round(leads / 4.33);
-  const swAmt = Math.round(acv * SW_R / 1000);
-  const implAmt = Math.round(acv * IMPL_R / 1000);
+  if (kpi[1]) {{
+    const vals = kpi[1].values;
+    const maxV = Math.max(...vals);
+    const peakW = ws[vals.indexOf(maxV)] || 'N/A';
+    setKPI('ksPeak', 'Peak: ' + peakW + ' (' + maxV + ')');
+  }}
 
-  return {{
-    cr,acv,leads,proj,cw,carry,
-    m1Resolved,m1SlippedToM3,m2cw,m3cw,
-    arrM1,arrM2,arrM3,arrQ,totalQ,
-    response,mql,sql,
-    under,over,wk,swAmt,implAmt
-  }};
+  if (kpi[1] && ws.length) {{
+    const vals = kpi[1].values;
+    const maxV = Math.max(...vals);
+    const peakW = ws[vals.indexOf(maxV)];
+    const excl = vals.filter(v=>v!==maxV);
+    const avgExcl = excl.length ? (excl.reduce((a,b)=>a+b,0)/excl.length).toFixed(1) : 'N/A';
+    const mult = top ? (maxV/(top/ws.length)).toFixed(1) : 'N/A';
+    const el = document.getElementById('kpiAlert');
+    if (el) el.innerHTML = '<strong>Key signal:</strong> The week of ' + peakW + ' was a clear outlier with ' + maxV + ' first calls — ' + mult + 'x the weekly average. Excluding it, average weekly volume is ~' + avgExcl + '.';
+  }}
 }}
 
-// ── BUILD REP TABLE ───────────────────────────────────────
-function statusBadge(val) {{
-  const v = parseFloat(val);
-  if (v >= 3.5) return `<span style="background:#F0FBF6;color:#1A9E5F;font-size:10px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;padding:3px 8px;border-radius:4px;">Efficient</span>`;
-  if (v >= 2.5) return `<span style="background:#0A0A0A;color:#F5D000;font-size:10px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;padding:3px 8px;border-radius:4px;">Optimal</span>`;
-  if (v >= 2.0) return `<span style="background:#FFF4E8;color:#B05010;font-size:10px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;padding:3px 8px;border-radius:4px;">Diminishing</span>`;
-  return `<span style="background:#FFF0F0;color:#E03030;font-size:10px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;padding:3px 8px;border-radius:4px;">Lead-constrained</span>`;
+let mainChart = null;
+function rebuildChart() {{
+  const ws = filteredWeeks;
+  const ss = filteredStages;
+  const ctx = document.getElementById('mainChart').getContext('2d');
+  if (mainChart) mainChart.destroy();
+  const ds = ss.map((s,i) => ({{
+    label:s.label, data:s.values,
+    borderColor:palette[i % palette.length],
+    backgroundColor:palette[i % palette.length]+'18',
+    pointBackgroundColor:palette[i % palette.length],
+    pointRadius:3, pointHoverRadius:5, borderWidth:1.5, fill:false, tension:0.35
+  }}));
+  mainChart = new Chart(ctx, {{
+    type:'line', data:{{labels:ws, datasets:ds}},
+    options:{{
+      responsive:true, maintainAspectRatio:false,
+      interaction:{{mode:'index',intersect:false}},
+      plugins:{{
+        legend:{{display:false}},
+        tooltip:{{
+          backgroundColor:'#0A0A0A', borderColor:'#1E1E1E', borderWidth:1,
+          titleFont:{{family:'Inter',size:11,weight:'700'}},
+          bodyFont:{{family:'Inter',size:11}},
+          titleColor:'#F5D000', bodyColor:'rgba(255,255,255,0.6)',
+          padding:12, boxPadding:4,
+          callbacks:{{
+            title: c => 'Week of '+c[0].label,
+            label: c => mainChart.isDatasetVisible(c.datasetIndex) ? '  '+ds[c.datasetIndex].label+': '+c.raw : null
+          }},
+          filter: i => mainChart.isDatasetVisible(i.datasetIndex) && i.raw > 0
+        }}
+      }},
+      scales:{{
+        x:{{ ticks:{{color:'#6B6B6B',font:{{family:'Inter',size:10}},maxRotation:45,minRotation:45}}, grid:{{color:'#E8E8E4'}}, border:{{color:'#E8E8E4'}} }},
+        y:{{ beginAtZero:true, ticks:{{color:'#6B6B6B',font:{{family:'Inter',size:10}},precision:0}}, grid:{{color:'#E8E8E4'}}, border:{{color:'#E8E8E4'}} }}
+      }}
+    }}
+  }});
+  const legendEl = document.getElementById('legend');
+  legendEl.innerHTML = '';
+  ss.forEach((s,i) => {{
+    const item = document.createElement('div');
+    item.className = 'leg-item'; item.id = 'leg-'+s.sn;
+    item.innerHTML = `<span class="leg-swatch" style="background:${{palette[i%palette.length]}}"></span><span class="leg-label">${{s.short}}</span><span class="leg-total">${{s.total}}</span>`;
+    item.addEventListener('click', () => {{
+      const vis = mainChart.isDatasetVisible(i);
+      mainChart.setDatasetVisibility(i, !vis);
+      mainChart.update();
+      item.classList.toggle('off', vis);
+    }});
+    legendEl.appendChild(item);
+  }});
 }}
 
-function buildRepTable(d) {{
-  const rows=[
-    {{r:6,  t:4, a:(d.cw/6).toFixed(1)}},
-    {{r:8,  t:3, a:(d.cw/8).toFixed(1)}},
-    {{r:10, t:2, a:(d.cw/10).toFixed(1)}},
-    {{r:11, t:2, a:(d.cw/11).toFixed(1)}},
-  ];
-  const tb=document.getElementById('rep-tbody');
-  tb.innerHTML=rows.map(r=>`
-    <tr>
-      <td>${{r.r}} Reps</td>
-      <td>${{r.t}} / mo</td>
-      <td style="font-size:18px;font-weight:800;letter-spacing:-0.3px;color:${{parseFloat(r.a)<2?'#E03030':parseFloat(r.a)<2.5?'#B05010':parseFloat(r.a)<3.5?'inherit':'#1A9E5F'}}">${{r.a}}</td>
-      <td>~${{d.cw}}</td>
-      <td>${{fmtM(d.arrM1)}}</td>
-      <td>${{statusBadge(r.a)}}</td>
-    </tr>
-  `).join('');
+function showAll() {{ if(!mainChart) return; filteredStages.forEach((_,i)=>{{mainChart.setDatasetVisibility(i,true);const l=document.getElementById('leg-'+filteredStages[i].sn);if(l)l.classList.remove('off');}});mainChart.update(); }}
+function hideAll() {{ if(!mainChart) return; filteredStages.forEach((_,i)=>{{mainChart.setDatasetVisibility(i,false);const l=document.getElementById('leg-'+filteredStages[i].sn);if(l)l.classList.add('off');}});mainChart.update(); }}
+
+function rebuildConvTable() {{
+  const ss  = filteredStages;
+  const tbl = document.getElementById('convTable');
+  tbl.innerHTML = '';
+  const fmc = ss.find(s=>s.sn===2);
+  const fmcTotal = fmc ? fmc.total : (ss[0] ? ss[0].total : 1);
+  const ws = filteredWeeks;
+  ss.forEach((s,i) => {{
+    const prev = i===0 ? null : ss[i-1];
+    const vsFmc = (s.total/fmcTotal*100).toFixed(1);
+    const vsPrev = prev ? (s.total/prev.total*100).toFixed(1) : null;
+    const pct = parseFloat(vsPrev)||100;
+    const fmcPct = parseFloat(vsFmc);
+    const cFmc = fmcPct>80?'#1A9E5F':fmcPct>50?'#D97706':'#E03030';
+    const cPrev = i===0?'#0A0A0A':pct>80?'#1A9E5F':pct>50?'#D97706':'#E03030';
+    const peakWk = s.values.length ? (ws[s.values.indexOf(Math.max(...s.values))]||'N/A') : 'N/A';
+    const row = document.createElement('tr');
+    row.setAttribute('data-sn', s.sn);
+    row.innerHTML = `
+      <td style="color:#6B6B6B;font-size:0.65rem;font-weight:700;letter-spacing:0.06em;">${{String(s.sn).padStart(2,'0')}}</td>
+      <td><div class="stage-name"><span class="stage-dot" style="background:${{palette[i%palette.length]}}"></span>${{s.label}}</div></td>
+      <td><span class="total-num">${{s.total}}</span></td>
+      <td>${{i===0?'<span style="font-size:0.65rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#6B6B6B;">Baseline</span>':`<div class="conv-bar-wrap"><div class="conv-bar-bg"><div class="conv-bar-fill" style="width:${{Math.min(pct,100)}}%;background:${{cPrev}}"></div></div><span class="conv-pct" style="color:${{cPrev}}">${{vsPrev}}%</span></div>`}}</td>
+      <td>${{s.sn===2?'<span style="font-size:0.65rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#6B6B6B;">Baseline</span>':`<div class="conv-bar-wrap"><div class="conv-bar-bg"><div class="conv-bar-fill" style="width:${{Math.min(fmcPct,100)}}%;background:${{cFmc}}"></div></div><span class="conv-pct" style="color:${{cFmc}}">${{vsFmc}}%</span></div>`}}</td>
+      <td><span class="peak-week">${{peakWk}}</span></td>
+      <td><button class="hide-row-btn" onclick="hideConvRow(${{s.sn}},this)">Hide</button></td>`;
+    tbl.appendChild(row);
+  }});
 }}
 
-// ── MAIN UPDATE ───────────────────────────────────────────
-function update() {{
-  const cr    = parseFloat(document.getElementById('sl-cr').value);
-  const acv   = parseInt(document.getElementById('sl-acv').value) * 1000;
-  const leads = parseInt(document.getElementById('sl-leads').value);
-
-  document.getElementById('v-cr').textContent    = cr + '%';
-  document.getElementById('v-acv').textContent   = '$' + (acv/1000) + 'K';
-  document.getElementById('v-leads').textContent = leads;
-
-  const d = model(cr, acv, leads);
-
-  // SLIDE 1
-  set('s1-sub', d.proj+' projected closes required each month · '+d.carry+' planned carries are structural, not failure');
-  set('p1-leads', d.leads);
-  set('p1-proj', d.proj); set('p1-cr', cr+'%'); set('p1-cr2', cr+'%'); set('p1-proj2', d.proj);
-  set('p1-acv', fmtK(acv));
-  set('p1-proj3', d.proj); set('p1-cw', d.cw); set('p1-carry', d.carry);
-  set('p1-carry-tag', d.carry+' carry → M+1');
-  set('p1-cw2', d.cw); set('p1-arr', fmtM(d.arrM1)); set('p1-cw3', d.cw); set('p1-acv2', fmtK(acv));
-  set('p1-arr-tag', fmtM(d.arrM1)+' / mo'); set('p1-wk', '~'+d.wk+' / wk');
-  set('s1-proj', d.proj); set('s1-cw', d.cw);
-  set('s1-arr-note', d.cw+' × '+fmtK(acv)+' = '+fmtM(d.arrM1)+' ARR');
-  set('s1-leads', d.leads);
-  set('s1-leads-note', cr+'% × '+d.leads+' = '+d.proj+' projected');
-  set('s1-cr', cr+'%');
-
-  // SLIDE 2
-  set('s2-acv-big', '$'+(acv).toLocaleString());
-  set('s2-sw', '$'+d.swAmt+'K'); set('s2-impl', '$'+d.implAmt+'K'); set('s2-acv-tot', fmtK(acv));
-  setHtml('s2-acv-note', '<strong>ACV at '+fmtK(acv)+':</strong> $'+d.swAmt+'K software + $'+d.implAmt+'K implementation. Sliders adjust live across all pages.');
-  set('s2-proj', d.proj); set('s2-cw', d.cw);
-  set('s2-arr-mo', fmtM(d.arrM1)); set('s2-arr-q', fmtM(d.arrQ));
-  set('s2-arr-yr', fmtM(d.arrM1*12)); set('s2-leads', d.leads);
-  buildRepTable(d);
-
-  // SLIDE 3
-  set('s3-sub', 'Month 1 attrition · '+d.leads+' raw leads → '+d.proj+' projected closes → '+d.cw+' closed won');
-  set('f-leads', d.leads);
-  set('f-d1', '~'+Math.round(d.leads*0.50)+' lost at initial outreach / unresponsive');
-  set('f-res', d.response);
-  document.getElementById('f-f2').style.width=Math.min(d.response/d.leads*100,98)+'%';
-  set('f-d2', '~'+(d.response-d.mql)+' disqualified at CS/AM qualification');
-  set('f-mql', d.mql);
-  document.getElementById('f-f3').style.width=Math.min(d.mql/d.leads*100,98)+'%';
-  set('f-d3', '~'+(d.mql-d.sql)+' lost in discovery / no product fit');
-  set('f-sql', d.sql);
-  document.getElementById('f-f4').style.width=Math.min(d.sql/d.leads*100,98)+'%';
-  set('f-d4', '~'+(d.sql-d.proj)+' lost during proposal / evaluation');
-  set('f-proj', d.proj);
-  document.getElementById('f-f5').style.width=Math.min(d.proj/d.leads*100,98)+'%';
-  set('f-cn', d.carry+' of '+d.proj+' carry to Month 2 — designed into model');
-  set('f-cw', d.cw);
-  document.getElementById('f-f6').style.width=Math.min(d.cw/d.leads*100,98)+'%';
-  set('f-ratio', (d.leads/d.proj).toFixed(1));
-  set('f-rn', d.leads+' ÷ '+d.proj+' projected = '+(d.leads/d.proj).toFixed(1)+':1');
-  set('f-acv', fmtK(acv));
-  set('f-l2', d.leads);
-  setHtml('f-ln', cr+'% × '+d.leads+' = '+d.proj+' closes<br>'+d.cw+' land · '+d.carry+' carry → M2');
-  set('f-wk', '~'+d.wk);
-  setHtml('f-wn', d.leads+' ÷ 4.33 weeks<br>'+Math.ceil(d.proj/4.33)+'–'+(Math.ceil(d.proj/4.33)+1)+' projected/wk<br>'+Math.ceil(d.cw/4.33)+'–'+(Math.ceil(d.cw/4.33)+1)+' actual/wk');
-
-  // SLIDE 4
-  set('s4-sub', d.proj+' projected closes is the monthly quota · '+d.carry+' planned carries are structural · 3-month map');
-  set('s4-p1', d.proj); set('s4-cw1', d.cw); set('s4-c1', d.carry); set('s4-l1', d.leads);
-  set('s4-a1', fmtM(d.arrM1)); set('s4-ct', d.carry+' carry → M2'); set('s4-w1', '~'+d.wk+' leads / week');
-  set('s4-p2', d.proj); set('s4-cr2', '+'+d.m1Resolved);
-  set('s4-cw2', d.m2cw); set('s4-l2', d.leads); set('s4-a2', fmtM(d.arrM2));
-  set('s4-m2t', d.m1Resolved+' close (M1)');
-  set('s4-w2', d.leads+' fresh + '+d.m1Resolved+' carryover');
-  set('s4-p3', d.proj); set('s4-cw3', '~'+d.m3cw); set('s4-l3', d.leads); set('s4-a3', fmtM(d.arrM3));
-  set('s4-tq', d.totalQ); set('s4-tn', d.cw+' + '+d.m2cw+' + '+d.m3cw);
-  set('s4-aq', fmtM(d.arrQ)); set('s4-q', d.proj); set('s4-ln', d.leads);
-
-  // SLIDE 5
-  const u=d.under, b=d, o=d.over;
-  setHtml('sc-ud', 'Close rate drops to ~'+u.cr+'%<br>Lead debt: 20–30% below target<br>Process breakdown / rep churn<br>Carries unrecovered');
-  setHtml('sc-bd', 'Close rate holds at '+cr+'%<br>'+d.leads+' leads / mo sustained<br>'+d.proj+' projected closes hit<br>'+d.cw+' land · '+d.carry+' carry resolved');
-  setHtml('sc-od', 'Close rate improves to ~'+o.cr+'%<br>Lead volume sustained at '+d.leads+'<br>Compressed cycle · fewer carries<br>Carry rate drops to ~10%');
-  set('sc-u1', fmtM(u.m1)); set('sc-u2', fmtM(u.m2)); set('sc-u3', fmtM(u.m3)); set('sc-uq', fmtM(u.q));
-  set('sc-b1', fmtM(b.arrM1)); set('sc-b2', fmtM(b.arrM2)); set('sc-b3', fmtM(b.arrM3)); set('sc-bq', fmtM(b.arrQ)); set('sc-bq2', fmtM(b.arrQ));
-  set('sc-o1', fmtM(o.m1)); set('sc-o2', fmtM(o.m2)); set('sc-o3', fmtM(o.m3)); set('sc-oq', fmtM(o.q));
-  setHtml('sc-uc', '<span>— '+u.cw+' deals/mo avg</span><span>— '+u.cr+'% close rate</span><span>— Lead volume deficit</span><span>— Carries unrecovered</span>');
-  setHtml('sc-bc', '<span>— '+d.proj+' projected closes / mo</span><span>— '+cr+'% close rate holds</span><span>— '+d.leads+' leads / mo</span><span>— M1 carry resolved by M3</span>');
-  setHtml('sc-oc', '<span>— '+o.cw+' deals/mo avg</span><span>— '+o.cr+'% close rate</span><span>— '+d.leads+' leads / mo sustained</span><span>— Carry rate drops to ~10%</span>');
-  const deltaU = b.arrQ - u.q;
-  const deltaO = o.q - b.arrQ;
-  set('sc-du', '−'+fmtM(deltaU)); set('sc-dun', fmtM(u.q)+' vs '+fmtM(b.arrQ));
-  set('sc-do', '+'+fmtM(deltaO)); set('sc-don', fmtM(o.q)+' vs '+fmtM(b.arrQ));
-  set('sc-bn', cr+'% close · '+d.leads+' leads / mo');
+let corrChart = null;
+function rebuildCorrChart() {{
+  const ws = filteredWeeks;
+  const ss = filteredStages;
+  const s1  = ss.find(s=>s.sn===1);
+  const s11 = ss.find(s=>s.sn===11);
+  const corrCtx = document.getElementById('corrChart').getContext('2d');
+  if (corrChart) corrChart.destroy();
+  corrChart = new Chart(corrCtx, {{
+    type:'bar',
+    data:{{
+      labels:ws,
+      datasets:[
+        {{ label:'First Calls Scheduled', data:s1?s1.values:[], backgroundColor:'rgba(245,208,0,0.15)', borderColor:'#F5D000', borderWidth:1.5, yAxisID:'y', type:'bar', order:2 }},
+        {{ label:'Closed Won', data:s11?s11.values:[], borderColor:'#1A9E5F', backgroundColor:'rgba(26,158,95,0.15)', pointBackgroundColor:'#1A9E5F', pointRadius:4, borderWidth:2, yAxisID:'y1', type:'line', tension:0.4, fill:false, order:1 }}
+      ]
+    }},
+    options:{{
+      responsive:true, maintainAspectRatio:false,
+      interaction:{{mode:'index',intersect:false}},
+      plugins:{{
+        legend:{{display:true,position:'top',align:'end',labels:{{font:{{family:'Inter',size:10,weight:'600'}},color:'#6B6B6B',boxWidth:12,padding:16}}}},
+        tooltip:{{backgroundColor:'#0A0A0A',borderColor:'#1E1E1E',borderWidth:1,titleFont:{{family:'Inter',size:10,weight:'700'}},bodyFont:{{family:'Inter',size:10}},titleColor:'#F5D000',bodyColor:'rgba(255,255,255,0.6)',padding:10}},
+        title:{{display:true,text:'Top-of-Funnel vs. Closed Won — Lag Effect',font:{{family:'Inter',size:11,weight:'700'}},color:'#0A0A0A',padding:{{bottom:12}},align:'start'}}
+      }},
+      scales:{{
+        x:{{ticks:{{color:'#6B6B6B',font:{{family:'Inter',size:9}},maxRotation:45,minRotation:45}},grid:{{display:false}},border:{{color:'#E8E8E4'}}}},
+        y:{{beginAtZero:true,position:'left',ticks:{{color:'#6B6B6B',font:{{family:'Inter',size:9}},precision:0}},grid:{{color:'#E8E8E4'}},border:{{color:'#E8E8E4'}},title:{{display:true,text:'First Calls',color:'#6B6B6B',font:{{size:9,weight:'700',family:'Inter'}}}}}},
+        y1:{{beginAtZero:true,position:'right',ticks:{{color:'#1A9E5F',font:{{family:'Inter',size:9}},precision:0}},grid:{{display:false}},border:{{color:'#E8E8E4'}},title:{{display:true,text:'Closed Won',color:'#1A9E5F',font:{{size:9,weight:'700',family:'Inter'}}}}}}
+      }}
+    }}
+  }});
 }}
 
-function show(idx) {{
-  document.querySelectorAll('.page').forEach((p,i)=>p.classList.toggle('active',i===idx));
-  document.querySelectorAll('.nav-btn').forEach((b,i)=>b.classList.toggle('active',i===idx));
-}}
+// ── INIT ──
+buildFilterGrid();
+rebuildAll();
 
-update();
+function hideConvRow(sn, btn) {{
+  const row = document.querySelector('#convTable tr[data-sn="'+sn+'"]');
+  if (row) {{ row.classList.add('conv-row-hidden'); }}
+  let showBtn = document.getElementById('showHiddenBtn');
+  if (!showBtn) {{
+    showBtn = document.createElement('button');
+    showBtn.id = 'showHiddenBtn';
+    showBtn.className = 'show-hidden-btn';
+    showBtn.textContent = 'Show hidden rows';
+    showBtn.onclick = showAllConvRows;
+    document.getElementById('convTable').closest('table').after(showBtn);
+  }}
+  showBtn.textContent = 'Show hidden rows (' + document.querySelectorAll('.conv-row-hidden').length + ')';
+}}
+function showAllConvRows() {{
+  document.querySelectorAll('.conv-row-hidden').forEach(r => r.classList.remove('conv-row-hidden'));
+  const btn = document.getElementById('showHiddenBtn');
+  if (btn) btn.remove();
+}}
 </script>
 </body>
 </html>"""
 
 
 def main():
-    html = build_html()
+    # Fetch main dataset (all leads)
+    raw = fetch_data(DATA_URL)
+    weeks, stages = parse_csv(raw)
+    print(f"Main dataset: {len(stages)} stages x {len(weeks)} weeks")
+
+    # Fetch ICP dataset from second tab (gid=1467538758)
+    # Only ICP-qualified leads — same stage/week format as main tab
+    try:
+        icp_raw = fetch_data(ICP_URL)
+        icp_weeks, icp_stages = parse_csv(icp_raw)
+        print(f"ICP dataset: {len(icp_stages)} stages x {len(icp_weeks)} weeks")
+    except Exception as e:
+        print(f"WARNING: Could not load ICP tab — {e}. ICP toggle will show empty data.")
+        icp_weeks = weeks
+        icp_stages = [{**s, "total": 0, "values": [0]*len(weeks)} for s in stages]
+
+    generated_at = datetime.utcnow().strftime("%b %d, %Y")
+    html = build_html(weeks, stages, icp_weeks, icp_stages, generated_at)
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write(html)
-    print(f"Built {OUTPUT_FILE} — {GENERATED_AT}")
-    print(f"Access code hash: {CODE_HASH[:16]}...")
+    print(f"Built {OUTPUT_FILE} — {len(stages)} stages x {len(weeks)} weeks + ICP tab")
 
 
 if __name__ == "__main__":
