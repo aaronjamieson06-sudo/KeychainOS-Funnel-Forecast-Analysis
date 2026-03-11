@@ -28,12 +28,11 @@ CODE_HASH     = hashlib.sha256("Pipeline2026".encode()).hexdigest()
 CODE_LENGTH   = 12
 
 # Model defaults (these become the slider start positions)
-DEFAULT_CR    = 9.5    # Close rate % (slider: 8–25)
-DEFAULT_ACV   = 51     # ACV in $K    (slider: 40–75)
-DEFAULT_LEADS = 265    # Leads/month  (slider: 200–300)
+DEFAULT_CR    = 9.5    # Close rate % (slider: 8–30)
+DEFAULT_ACV   = 51     # ACV in $K    (slider: 20–100)
+DEFAULT_LEADS = 265    # Leads/month  (slider: 40–300)
 
 # Scenario multipliers (applied to close rate only; lead volume stays constant)
-# Over scenario is capped at 25% max to prevent unrealistic output at high CR inputs
 CR_DELTA      = 3.0    # Scenario variance ±pp additive offset from baseline CR
 
 # Deal structure (proportion of ACV)
@@ -295,13 +294,13 @@ tr:last-child td{{border-bottom:none;}} tr:hover td{{background:var(--bg);}}
 <div class="cbar">
   <div class="cg">
     <span class="cl">Close Rate</span>
-    <input type="range" id="sl-cr" min="8" max="25" step="0.5" value="{DEFAULT_CR}" oninput="update()">
+    <input type="range" id="sl-cr" min="8" max="30" step="0.5" value="{DEFAULT_CR}" oninput="update()">
     <span class="cv" id="v-cr">{DEFAULT_CR}%</span>
   </div>
   <div class="csep"></div>
   <div class="cg">
     <span class="cl">ACV</span>
-    <input type="range" id="sl-acv" min="40" max="75" step="1" value="{DEFAULT_ACV}" oninput="update()">
+    <input type="range" id="sl-acv" min="20" max="100" step="1" value="{DEFAULT_ACV}" oninput="update()">
     <span class="cv" id="v-acv">${DEFAULT_ACV}K</span>
   </div>
   <div class="csep"></div>
@@ -340,7 +339,7 @@ tr:last-child td{{border-bottom:none;}} tr:hover td{{background:var(--bg);}}
     <div class="ptile">
       <div class="parr">→</div>
       <div class="psl">SQL</div>
-      <div class="psd" style="margin-top:6px;">Sales process initiates. Discovery, demo, scoping. ACV at <span id="p1-acv">$51K</span> ($36K software + $15K implementation).</div>
+      <div class="psd" style="margin-top:6px;" id="p1-acv-desc">Sales process initiates. Discovery, demo, scoping. ACV at <span id="p1-acv">$51K</span> ($36K software + $15K implementation).</div>
       <span class="tag tr">Significant attrition</span>
     </div>
     <div class="ptile feat">
@@ -417,7 +416,7 @@ tr:last-child td{{border-bottom:none;}} tr:hover td{{background:var(--bg);}}
     <table><thead><tr><th>Headcount</th><th>Target / Rep</th><th>Actual / Rep</th><th>Total Closed</th><th>Monthly ARR</th><th>Status</th></tr></thead>
     <tbody id="rep-tbody"></tbody></table>
   </div>
-  <div class="ablock"><div class="aicon">→</div><div class="atext"><strong>Diagnosis:</strong> Past 8 reps, per-rep output degrades without additional lead volume. Pipeline capacity is the constraint, not headcount. Efficiency drops 47% from 6→11 reps while total closes remain flat.</div></div>
+  <div class="ablock"><div class="aicon">→</div><div class="atext" id="s2-diag"><strong>Diagnosis:</strong> Past 8 reps, per-rep output degrades without additional lead volume. Pipeline capacity is the constraint, not headcount.</div></div>
 
   <footer><span class="fmeta">Pipeline Intelligence · KeychainOS · {GENERATED_AT}</span><span class="fconf">Confidential</span></footer>
 </div>
@@ -494,22 +493,22 @@ tr:last-child td{{border-bottom:none;}} tr:hover td{{background:var(--bg);}}
       <div class="smo">Month 2 · Carryover + Base</div>
       <div class="srow"><span class="srl">New projected closes</span><span class="srv" id="s4-p2" style="font-weight:800;">25</span></div>
       <div class="srow"><span class="srl">M1 carryover closes</span><span class="srv green" id="s4-cr2">+4</span></div>
-      <div class="srow"><span class="srl">Lost from M1 carry (20%)</span><span class="srv red">−1</span></div>
+      <div class="srow"><span class="srl">Lost from M1 carry (20%)</span><span class="srv red" id="s4-m2lost">−1</span></div>
       <div class="srow"><span class="srl">Total closes M2</span><span class="srv green" id="s4-cw2">24</span></div>
       <div class="srow"><span class="srl">Fresh leads required</span><span class="srv" id="s4-l2">265</span></div>
       <div class="tblock"><span class="tblabel">Closed ARR · M2</span><span class="tbval" id="s4-a2">$1.22M</span></div>
       <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:4px;">
         <span class="stag stc" id="s4-m2t">4 close (M1)</span>
-        <span class="stag stl">1 closed lost</span>
-        <span class="stag stc">~1 → M3</span>
+        <span class="stag stl" id="s4-m2ltag">1 closed lost</span>
+        <span class="stag stc" id="s4-m2slip">~1 → M3</span>
       </div>
       <div class="lnote" id="s4-w2">265 fresh + 4 carryover</div>
     </div>
     <div class="sc">
       <div class="smo">Month 3 · Normalized</div>
       <div class="srow"><span class="srl">New projected closes</span><span class="srv" id="s4-p3" style="font-weight:800;">25</span></div>
-      <div class="srow"><span class="srl">M2 carryover closes</span><span class="srv green">+4</span></div>
-      <div class="srow"><span class="srl">M1 residual to M3</span><span class="srv green">+1</span></div>
+      <div class="srow"><span class="srl">M2 carryover closes</span><span class="srv green" id="s4-m3cr">+4</span></div>
+      <div class="srow"><span class="srl">M1 residual to M3</span><span class="srv green" id="s4-m3res">+1</span></div>
       <div class="srow"><span class="srl">Total closes M3</span><span class="srv green" id="s4-cw3">~25</span></div>
       <div class="srow"><span class="srl">Fresh leads required</span><span class="srv" id="s4-l3">265</span></div>
       <div class="tblock"><span class="tblabel">Closed ARR · M3</span><span class="tbval" id="s4-a3">$1.28M</span></div>
@@ -522,7 +521,7 @@ tr:last-child td{{border-bottom:none;}} tr:hover td{{background:var(--bg);}}
   <div class="g4">
     <div class="stat"><div class="slabel">Total Q Deals</div><div class="sval" id="s4-tq">69</div><div class="snote" id="s4-tn">20 + 24 + 25</div></div>
     <div class="stat"><div class="slabel">Q ARR Baseline</div><div class="sval green" id="s4-aq">$3.52M</div><div class="snote">Carryover fully absorbed</div></div>
-    <div class="stat"><div class="slabel">Deals Lost</div><div class="sval red">1</div><div class="snote">M1 carry → closed lost M2</div></div>
+    <div class="stat"><div class="slabel">Deals Lost</div><div class="sval red" id="s4-dlost">1</div><div class="snote" id="s4-dlostn">M1 carry → closed lost M2</div></div>
     <div class="stat"><div class="slabel">Monthly Proj. Quota</div><div class="sval by" id="s4-q" style="font-size:28px;">25</div><div class="snote">Steady-state · <span id="s4-ln">265</span> leads/mo</div></div>
   </div>
 
@@ -647,13 +646,15 @@ function model(cr, acv, leads) {{
   const arrQ = arrM1 + arrM2 + arrM3;
   const totalQ = cw + m2cw + m3cw;
 
+  // Deals lost from carry (20% of carry that don't resolve)
+  const dealsLost = carry - m1Resolved;
+
   // Funnel — response/MQL/SQL are lead-quality rates, independent of close rate
   const response = Math.round(leads * 0.50);
   const mql = Math.round(leads * 0.305);
   const sql = Math.round(leads * 0.196);
 
   // Scenarios — vary CR only, same leads
-  // Scenarios use additive ±CR_DELTA pp offset from baseline CR
   function sc(delta) {{
     const sCrPct = Math.max(0.1, cr + delta);
     const sCr = sCrPct / 100;
@@ -668,7 +669,9 @@ function model(cr, acv, leads) {{
     const sM3cw = sCw + sM2r + sM1slipped;
     return {{
       cr: sCrPct.toFixed(1),
+      proj: sProj,
       cw: sCw,
+      carry: sCarry,
       m1: sCw * acv,
       m2: sM2cw * acv,
       m3: sM3cw * acv,
@@ -684,11 +687,12 @@ function model(cr, acv, leads) {{
   const implAmt = Math.round(acv * IMPL_R / 1000);
 
   return {{
-    cr,acv,leads,proj,cw,carry,
+    cr,acv,leads,proj,cw,carry,dealsLost,
     m1Resolved,m1SlippedToM3,m2cw,m3cw,
     arrM1,arrM2,arrM3,arrQ,totalQ,
     response,mql,sql,
-    under,over,wk,swAmt,implAmt
+    under,over,wk,swAmt,implAmt,
+    m2Resolved
   }};
 }}
 
@@ -703,10 +707,10 @@ function statusBadge(val) {{
 
 function buildRepTable(d) {{
   const rows=[
-    {{r:6,  t:4, a:(d.cw/6).toFixed(1)}},
-    {{r:8,  t:3, a:(d.cw/8).toFixed(1)}},
-    {{r:10, t:2, a:(d.cw/10).toFixed(1)}},
-    {{r:11, t:2, a:(d.cw/11).toFixed(1)}},
+    {{r:6,  t:Math.ceil(d.cw/6), a:(d.cw/6).toFixed(1)}},
+    {{r:8,  t:Math.ceil(d.cw/8), a:(d.cw/8).toFixed(1)}},
+    {{r:10, t:Math.ceil(d.cw/10), a:(d.cw/10).toFixed(1)}},
+    {{r:11, t:Math.ceil(d.cw/11), a:(d.cw/11).toFixed(1)}},
   ];
   const tb=document.getElementById('rep-tbody');
   tb.innerHTML=rows.map(r=>`
@@ -748,6 +752,9 @@ function update() {{
   set('s1-leads-note', cr+'% × '+d.leads+' = '+d.proj+' projected');
   set('s1-cr', cr+'%');
 
+  // SLIDE 1 — dynamic SQL tile description
+  setHtml('p1-acv-desc', 'Sales process initiates. Discovery, demo, scoping. ACV at '+fmtK(acv)+' ($'+d.swAmt+'K software + $'+d.implAmt+'K implementation).');
+
   // SLIDE 2
   set('s2-acv-big', '$'+(acv).toLocaleString());
   set('s2-sw', '$'+d.swAmt+'K'); set('s2-impl', '$'+d.implAmt+'K'); set('s2-acv-tot', fmtK(acv));
@@ -769,14 +776,15 @@ function update() {{
   set('f-d3', '~'+(d.mql-d.sql)+' lost in discovery / no product fit');
   set('f-sql', d.sql);
   document.getElementById('f-f4').style.width=Math.min(d.sql/d.leads*100,98)+'%';
-  set('f-d4', '~'+(d.sql-d.proj)+' lost during proposal / evaluation');
+  set('f-d4', '~'+Math.max(0,d.sql-d.proj)+' lost during proposal / evaluation');
   set('f-proj', d.proj);
   document.getElementById('f-f5').style.width=Math.min(d.proj/d.leads*100,98)+'%';
   set('f-cn', d.carry+' of '+d.proj+' carry to Month 2 — designed into model');
   set('f-cw', d.cw);
   document.getElementById('f-f6').style.width=Math.min(d.cw/d.leads*100,98)+'%';
-  set('f-ratio', (d.leads/d.proj).toFixed(1));
-  set('f-rn', d.leads+' ÷ '+d.proj+' projected = '+(d.leads/d.proj).toFixed(1)+':1');
+  const ratio = d.proj > 0 ? (d.leads/d.proj).toFixed(1) : '—';
+  set('f-ratio', ratio);
+  set('f-rn', d.leads+' ÷ '+d.proj+' projected = '+ratio+':1');
   set('f-acv', fmtK(acv));
   set('f-l2', d.leads);
   setHtml('f-ln', cr+'% × '+d.leads+' = '+d.proj+' closes<br>'+d.cw+' land · '+d.carry+' carry → M2');
@@ -788,28 +796,37 @@ function update() {{
   set('s4-p1', d.proj); set('s4-cw1', d.cw); set('s4-c1', d.carry); set('s4-l1', d.leads);
   set('s4-a1', fmtM(d.arrM1)); set('s4-ct', d.carry+' carry → M2'); set('s4-w1', '~'+d.wk+' leads / week');
   set('s4-p2', d.proj); set('s4-cr2', '+'+d.m1Resolved);
+  set('s4-m2lost', '−'+d.dealsLost);
   set('s4-cw2', d.m2cw); set('s4-l2', d.leads); set('s4-a2', fmtM(d.arrM2));
   set('s4-m2t', d.m1Resolved+' close (M1)');
+  set('s4-m2ltag', d.dealsLost+' closed lost');
+  set('s4-m2slip', '~'+d.m1SlippedToM3+' → M3');
   set('s4-w2', d.leads+' fresh + '+d.m1Resolved+' carryover');
-  set('s4-p3', d.proj); set('s4-cw3', '~'+d.m3cw); set('s4-l3', d.leads); set('s4-a3', fmtM(d.arrM3));
+  set('s4-p3', d.proj);
+  set('s4-m3cr', '+'+d.m2Resolved);
+  set('s4-m3res', '+'+d.m1SlippedToM3);
+  set('s4-cw3', '~'+d.m3cw); set('s4-l3', d.leads); set('s4-a3', fmtM(d.arrM3));
   set('s4-tq', d.totalQ); set('s4-tn', d.cw+' + '+d.m2cw+' + '+d.m3cw);
   set('s4-aq', fmtM(d.arrQ)); set('s4-q', d.proj); set('s4-ln', d.leads);
+  set('s4-dlost', d.dealsLost);
+  set('s4-dlostn', d.dealsLost+' from M1 carry → closed lost M2');
+  set('s4-w3', d.leads+' leads / mo · normalized');
 
   // SLIDE 5
-  const u=d.under, b=d, o=d.over;
+  const u=d.under, o=d.over;
   setHtml('sc-ud', 'Close rate drops to ~'+u.cr+'%<br>Lead debt: 20–30% below target<br>Process breakdown / rep churn<br>Carries unrecovered');
   setHtml('sc-bd', 'Close rate holds at '+cr+'%<br>'+d.leads+' leads / mo sustained<br>'+d.proj+' projected closes hit<br>'+d.cw+' land · '+d.carry+' carry resolved');
   setHtml('sc-od', 'Close rate improves to ~'+o.cr+'%<br>Lead volume sustained at '+d.leads+'<br>Compressed cycle · fewer carries<br>Carry rate drops to ~10%');
   set('sc-u1', fmtM(u.m1)); set('sc-u2', fmtM(u.m2)); set('sc-u3', fmtM(u.m3)); set('sc-uq', fmtM(u.q));
-  set('sc-b1', fmtM(b.arrM1)); set('sc-b2', fmtM(b.arrM2)); set('sc-b3', fmtM(b.arrM3)); set('sc-bq', fmtM(b.arrQ)); set('sc-bq2', fmtM(b.arrQ));
+  set('sc-b1', fmtM(d.arrM1)); set('sc-b2', fmtM(d.arrM2)); set('sc-b3', fmtM(d.arrM3)); set('sc-bq', fmtM(d.arrQ)); set('sc-bq2', fmtM(d.arrQ));
   set('sc-o1', fmtM(o.m1)); set('sc-o2', fmtM(o.m2)); set('sc-o3', fmtM(o.m3)); set('sc-oq', fmtM(o.q));
   setHtml('sc-uc', '<span>— '+u.cw+' deals/mo avg</span><span>— '+u.cr+'% close rate</span><span>— Lead volume deficit</span><span>— Carries unrecovered</span>');
   setHtml('sc-bc', '<span>— '+d.proj+' projected closes / mo</span><span>— '+cr+'% close rate holds</span><span>— '+d.leads+' leads / mo</span><span>— M1 carry resolved by M3</span>');
   setHtml('sc-oc', '<span>— '+o.cw+' deals/mo avg</span><span>— '+o.cr+'% close rate</span><span>— '+d.leads+' leads / mo sustained</span><span>— Carry rate drops to ~10%</span>');
-  const deltaU = b.arrQ - u.q;
-  const deltaO = o.q - b.arrQ;
-  set('sc-du', '−'+fmtM(deltaU)); set('sc-dun', fmtM(u.q)+' vs '+fmtM(b.arrQ));
-  set('sc-do', '+'+fmtM(deltaO)); set('sc-don', fmtM(o.q)+' vs '+fmtM(b.arrQ));
+  const deltaU = d.arrQ - u.q;
+  const deltaO = o.q - d.arrQ;
+  set('sc-du', '−'+fmtM(deltaU)); set('sc-dun', fmtM(u.q)+' vs '+fmtM(d.arrQ));
+  set('sc-do', '+'+fmtM(deltaO)); set('sc-don', fmtM(o.q)+' vs '+fmtM(d.arrQ));
   set('sc-bn', cr+'% close · '+d.leads+' leads / mo');
 }}
 
